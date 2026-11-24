@@ -1,0 +1,927 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#005DAA" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="好市多分帳" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧾</text></svg>" />
+<title>好市多分帳</title>
+<style>
+:root {
+  --blue: #005daa;
+  --blue-soft: #e6f0fa;
+  --red: #e31837;
+  --green: #12805c;
+  --bg: #f3f5f8;
+  --card: #fff;
+  --text: #1c2430;
+  --muted: #6b7684;
+  --line: #e3e7ec;
+  --warn: #b45309;
+  --radius: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang TC', 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button { font: inherit; cursor: pointer; }
+input, select { font: inherit; font-size: 16px; } /* 16px 避免 iOS 自動放大 */
+
+.app { max-width: 640px; margin: 0 auto; min-height: 100vh; padding-bottom: 90px; }
+main { padding: 12px; }
+.center { text-align: center; padding: 40px 20px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; line-height: 1.5; }
+.row { display: flex; align-items: center; }
+.between { justify-content: space-between; }
+.gap { gap: 8px; flex-wrap: wrap; }
+
+/* 登入 */
+.login { padding-top: 18vh; }
+.login .logo { font-size: 64px; }
+.login h1 { margin: 8px 0; color: var(--blue); }
+
+/* 頂部 */
+.topbar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--blue); color: #fff; padding: 12px 14px;
+  padding-top: max(12px, env(safe-area-inset-top));
+}
+.topbar .title { font-weight: 700; font-size: 17px; }
+.topbar .link { color: #fff; opacity: 0.9; }
+.topbar .link.danger { color: #ffd2d8; }
+
+/* 下方分頁 */
+.tabs {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
+  display: flex; background: #fff; border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tabs button {
+  flex: 1; background: none; border: 0; padding: 8px 0 10px; color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; font-size: 12px; position: relative;
+}
+.tabs button span { font-size: 22px; }
+.tabs button.on { color: var(--blue); font-weight: 700; }
+.badge {
+  position: absolute; top: 4px; left: 54%; background: var(--red); color: #fff;
+  font-style: normal; font-size: 11px; border-radius: 9px; padding: 1px 6px;
+}
+
+/* 卡片與按鈕 */
+.card { background: var(--card); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.card h3 { margin: 0 0 10px; font-size: 16px; }
+.btn {
+  border: 1px solid var(--line); background: #fff; color: var(--text);
+  border-radius: 10px; padding: 10px 14px; font-weight: 600;
+}
+.btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+.btn:disabled { opacity: .5; }
+.btn.block { width: 100%; }
+.btn.big { padding: 14px; font-size: 17px; margin-bottom: 12px; }
+.link { background: none; border: 0; color: var(--blue); padding: 4px; }
+.error { color: var(--red); background: #fdecef; padding: 8px 10px; border-radius: 8px; margin-top: 8px; font-size: 14px; }
+.warn { color: var(--warn); font-size: 13px; }
+.tag { background: var(--blue-soft); color: var(--blue); font-size: 11px; border-radius: 6px; padding: 1px 6px; margin-left: 4px; }
+.tag.gray { background: #eee; color: var(--muted); }
+.loading { margin-top: 10px; color: var(--blue); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .4; } }
+
+/* 選擇晶片 */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  border: 1.5px solid var(--line); background: #fff; border-radius: 999px;
+  padding: 6px 12px; font-size: 14px; color: var(--text);
+}
+.chip.on { background: var(--blue); border-color: var(--blue); color: #fff; }
+.chip.on.payer { background: var(--red); border-color: var(--red); }
+.chip.small { padding: 4px 10px; font-size: 13px; }
+.chip.ghost { border-style: dashed; color: var(--muted); }
+
+/* 收據列表 */
+.list { list-style: none; padding: 0; margin: 0; }
+.receipt { cursor: pointer; }
+.receipt .amount { font-size: 18px; color: var(--blue); }
+.receipt .row + .row { margin-top: 4px; }
+.shares { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pill { background: #f0f2f5; border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+.pill.payer { background: #fdecef; color: var(--red); }
+
+/* 編輯器 */
+.fields { margin-top: 12px; }
+.fields label { flex: 1; min-width: 140px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.fields input, .add-member input, .debt input {
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%;
+}
+.debt input { width: 120px; }
+.previews { display: flex; gap: 8px; overflow-x: auto; margin-top: 10px; }
+.previews img { height: 120px; border-radius: 8px; border: 1px solid var(--line); }
+.quick { background: var(--blue-soft); border-radius: 10px; padding: 10px; margin-bottom: 10px; font-size: 13px; }
+.quick .chips { margin-top: 6px; }
+.items { list-style: none; padding: 0; margin: 0 0 10px; }
+.item { border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin-bottom: 8px; }
+.item.unassigned { border-color: #f5c27a; background: #fffaf1; }
+.item-top { display: flex; gap: 6px; }
+.item-top .name { flex: 1; border: 0; border-bottom: 1px dashed var(--line); padding: 4px 0; font-weight: 600; background: transparent; }
+.x { background: none; border: 0; color: var(--muted); padding: 4px 8px; }
+.item-nums { display: flex; gap: 8px; align-items: flex-end; margin: 8px 0; }
+.item-nums label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); width: 84px; }
+.item-nums input { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; width: 100%; }
+.net { margin-left: auto; text-align: right; display: flex; flex-direction: column; }
+.net small { font-size: 11px; color: var(--muted); }
+.net b { font-size: 17px; }
+.net s { font-size: 12px; color: var(--muted); }
+.item-foot { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; }
+.code { color: var(--muted); font-family: ui-monospace, monospace; }
+
+.summary {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 5;
+  max-width: 640px; margin: 0 auto; background: #fff; border-top: 1px solid var(--line);
+  padding: 10px 14px; padding-bottom: max(10px, env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 12px rgba(0,0,0,.06);
+}
+.sum-row { display: flex; justify-content: space-between; align-items: baseline; }
+.sum-row b { font-size: 18px; color: var(--blue); }
+.sum-people { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 14px; margin: 6px 0 8px; }
+
+/* 結算 */
+.debts { list-style: none; padding: 0; margin: 0; }
+.debt { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; }
+.debt.mine { border-color: var(--blue); background: #f7fbff; }
+.debt.need { border-color: var(--red); background: #fff7f8; }
+.debt-line { display: flex; align-items: center; gap: 8px; font-size: 17px; }
+.debt-line .arrow { color: var(--muted); }
+.debt-line .amount { margin-left: auto; font-weight: 800; color: var(--red); }
+.confirms { display: flex; gap: 14px; font-size: 14px; flex-wrap: wrap; }
+.stats { width: 100%; border-collapse: collapse; font-size: 14px; }
+.stats th, .stats td { padding: 8px 4px; border-bottom: 1px solid var(--line); text-align: right; }
+.stats th:first-child, .stats td:first-child { text-align: left; white-space: nowrap; }
+.stats td .shares { justify-content: flex-end; margin: 0; }
+.pos { color: var(--green); font-weight: 700; }
+.neg { color: var(--red); font-weight: 700; }
+.month-head { margin-top: 16px; }
+.month-head select { border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; background: #fff; }
+.history { list-style: none; padding: 0; margin: 8px 0 0; }
+.history li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.history li span { flex: 1; }
+
+/* 成員 */
+.members { list-style: none; padding: 0; margin: 0; }
+.members li { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.members li.inactive { opacity: .55; }
+.add-member { display: flex; flex-direction: column; gap: 8px; }
+
+</style>
+</head>
+<body>
+<div id="root"><div class="center muted">載入中…</div></div>
+<script type="module">
+// ============================================================
+// ① 只需要修改這裡：貼上 Firebase「專案設定 → 一般 → 你的應用程式」的 firebaseConfig
+// ============================================================
+const firebaseConfig = {
+  apiKey: 'AIzaSyCWZBSbJkwN4XK0pfuBN4eyoM7Q328J_l4',
+  authDomain: 'happy-in-coastco.firebaseapp.com',
+  projectId: 'happy-in-coastco',
+  storageBucket: 'happy-in-coastco.firebasestorage.app',
+  messagingSenderId: '673832536334',
+  appId: '1:673832536334:web:4195a5be8fddfe0665ef5f',
+};
+// 收據辨識使用的 Gemini 模型（依序嘗試，前一個不能用就換下一個）
+const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash'];
+// ============================================================
+
+import { html, render, useState, useEffect, useMemo, useRef } from 'https://unpkg.com/htm@3.1.1/preact/standalone.module.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js';
+import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js';
+import {
+  getFirestore, collection, doc, onSnapshot, query, orderBy, addDoc, setDoc, updateDoc,
+  deleteDoc, runTransaction, serverTimestamp,
+} from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
+import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-ai.js';
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const ai = getAI(app, { backend: new GoogleAIBackend() });
+const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+// ============================================================
+// 分帳計算（金額一律用整數新台幣）
+// ============================================================
+const itemNet = (it) => Math.round((Number(it.amount) || 0) - (Number(it.discount) || 0));
+const receiptTotal = (r) => (r.items || []).reduce((s, it) => s + itemNet(it), 0);
+
+// 平分整數金額，零頭依 offset 輪流分配，避免總是同一人多付 1 元
+function splitAmount(amount, assignees, offset = 0) {
+  const n = assignees.length, out = {};
+  if (!n) return out;
+  const sign = amount < 0 ? -1 : 1, abs = Math.abs(amount), base = Math.floor(abs / n);
+  let rem = abs - base * n;
+  assignees.forEach((p) => (out[p] = base));
+  for (let i = 0; i < n && rem > 0; i++, rem--) out[assignees[(offset + i) % n]] += 1;
+  for (const k in out) out[k] *= sign;
+  return out;
+}
+
+function receiptShares(r) {
+  const shares = {};
+  (r.items || []).forEach((it, idx) => {
+    for (const [p, v] of Object.entries(splitAmount(itemNet(it), it.assignees || [], idx)))
+      shares[p] = (shares[p] || 0) + v;
+  });
+  return shares;
+}
+
+// balance = 先付 − 消費 + 已付還款 − 已收還款（只算雙方都確認的）
+function computeBalances(receipts, settlements, emails = []) {
+  const acc = {};
+  const ensure = (e) => (acc[e] ||= { spent: 0, paid: 0, sent: 0, received: 0, balance: 0 });
+  emails.forEach(ensure);
+  for (const r of receipts) {
+    ensure(r.payer).paid += receiptTotal(r);
+    for (const [p, v] of Object.entries(receiptShares(r))) ensure(p).spent += v;
+  }
+  for (const s of settlements) {
+    if (s.status !== 'done') continue;
+    ensure(s.from).sent += s.amount;
+    ensure(s.to).received += s.amount;
+  }
+  for (const a of Object.values(acc)) a.balance = a.paid - a.spent + a.sent - a.received;
+  return acc;
+}
+
+// 用最少筆數的轉帳結清
+function suggestTransfers(balances) {
+  const d = [], c = [];
+  for (const [email, a] of Object.entries(balances)) {
+    if (a.balance < 0) d.push({ email, amt: -a.balance });
+    else if (a.balance > 0) c.push({ email, amt: a.balance });
+  }
+  const by = (x, y) => y.amt - x.amt || x.email.localeCompare(y.email);
+  d.sort(by); c.sort(by);
+  const out = [];
+  let i = 0, j = 0;
+  while (i < d.length && j < c.length) {
+    const pay = Math.min(d[i].amt, c[j].amt);
+    if (pay > 0) out.push({ from: d[i].email, to: c[j].email, amount: pay });
+    d[i].amt -= pay; c[j].amt -= pay;
+    if (!d[i].amt) i++;
+    if (!c[j].amt) j++;
+  }
+  return out;
+}
+
+function spendingByMonth(receipts) {
+  const out = {};
+  for (const r of receipts) {
+    const m = (r.date || '').slice(0, 7) || '未知';
+    out[m] ||= {};
+    for (const [p, v] of Object.entries(receiptShares(r))) out[m][p] = (out[m][p] || 0) + v;
+  }
+  return out;
+}
+
+// 商品編號 → 上次分配給誰
+function buildAssignMemory(receipts) {
+  const mem = {};
+  [...receipts].sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach((r) =>
+    (r.items || []).forEach((it) => { if (it.code && it.assignees?.length) mem[it.code] = it.assignees; })
+  );
+  return mem;
+}
+
+const fmt = (n) => (Math.round(n) < 0 ? '-' : '') + 'NT$' + Math.abs(Math.round(n)).toLocaleString('zh-TW');
+const today = () => new Date().toLocaleDateString('sv-SE');
+let seq = 0;
+const newId = () => 'i' + Date.now().toString(36) + seq++;
+
+// ============================================================
+// 收據辨識（Firebase AI Logic → Gemini）
+// ============================================================
+const PROMPT = `你是台灣好市多（Costco）收據辨識助手。請讀取照片中的收據，輸出 JSON。
+
+收據格式說明：
+- 每個商品通常是兩行：第一行是商品名稱，第二行是「商品編號  數量x  單價  金額 T」。
+- 「***COUPON」代表折扣（回饋金），下一行是說明（例如「#1956385回饋金」「IRC FOR #1307818」「身體保養回饋金」），
+  再下一行是「折扣編號  1x  金額  金額-T」，金額後面有「-」代表要減掉。
+- 折扣說明中的「#數字」就是被折扣商品的商品編號，請把折扣金額合併到該商品的 discount 欄位。
+- 若折扣說明沒有商品編號（例如「身體保養回饋金」），就套用到緊接在 COUPON 之前的那個商品。
+- 不要把 COUPON 本身當成商品輸出。
+- 「預掃描商品開始/結束」、會員編號、發票、付款方式、找零等都不是商品。
+- amount 是該商品那一行的金額（數量×單價），discount 是折扣金額（正數），沒有折扣就填 0。
+- 若收據上有總計／應付金額，填入 printedTotal；沒有或看不到就填 0。
+- 日期格式 YYYY-MM-DD，看不到就填空字串。
+- 看不清楚的字請盡量推測，但不要捏造不存在的商品。`;
+
+const RECEIPT_SCHEMA = Schema.object({
+  properties: {
+    store: Schema.string(),
+    date: Schema.string(),
+    printedTotal: Schema.number(),
+    items: Schema.array({
+      items: Schema.object({
+        properties: {
+          name: Schema.string(),
+          code: Schema.string(),
+          qty: Schema.number(),
+          amount: Schema.number(),
+          discount: Schema.number(),
+        },
+        optionalProperties: ['qty'],
+      }),
+    }),
+  },
+  optionalProperties: ['store', 'date', 'printedTotal'],
+});
+
+async function parseReceipt(images) {
+  const parts = [
+    PROMPT + (images.length > 1 ? '\n\n以下多張照片是同一張收據的不同段落（依序），重疊的部分不要重複計算。' : ''),
+    ...images.map((im) => ({ inlineData: { mimeType: 'image/jpeg', data: im.data } })),
+  ];
+  let lastErr;
+  for (const name of GEMINI_MODELS) {
+    try {
+      const model = getGenerativeModel(ai, {
+        model: name,
+        generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: RECEIPT_SCHEMA },
+      });
+      const res = await model.generateContent(parts);
+      const p = JSON.parse(res.response.text());
+      return {
+        store: p.store || '',
+        date: /^\d{4}-\d{2}-\d{2}$/.test(p.date || '') ? p.date : '',
+        printedTotal: Math.round(Number(p.printedTotal) || 0),
+        items: (p.items || [])
+          .map((it) => ({
+            name: String(it.name || '').trim(),
+            code: String(it.code || '').trim(),
+            qty: Number(it.qty) || 1,
+            amount: Math.round(Number(it.amount) || 0),
+            discount: Math.abs(Math.round(Number(it.discount) || 0)),
+          }))
+          .filter((it) => it.name || it.amount),
+      };
+    } catch (e) {
+      lastErr = e;
+      if (!/not found|404|not supported/i.test(e.message || '')) break; // 只有模型不存在才換下一個
+    }
+  }
+  throw lastErr;
+}
+
+// 照片縮小成 JPEG base64，加快上傳
+async function fileToJpeg(file, maxSide) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((ok, bad) => {
+      const i = new Image();
+      i.onload = () => ok(i);
+      i.onerror = () => bad(new Error('無法讀取圖片'));
+      i.src = url;
+    });
+    const s = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(img.naturalWidth * s);
+    cv.height = Math.round(img.naturalHeight * s);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    const dataUrl = cv.toDataURL('image/jpeg', 0.82);
+    return { data: dataUrl.split(',')[1], preview: dataUrl };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// ============================================================
+// 主畫面
+// ============================================================
+function App() {
+  const [user, setUser] = useState(undefined);
+  const [isMember, setIsMember] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [receipts, setReceipts] = useState([]);
+  const [settlements, setSettlements] = useState([]);
+  const [tab, setTab] = useState('receipts');
+  const [editing, setEditing] = useState(null);
+
+  useEffect(() => onAuthStateChanged(auth, setUser), []);
+  const myEmail = user?.email?.toLowerCase();
+
+  useEffect(() => {
+    if (!myEmail) return;
+    setIsMember(null);
+    return onSnapshot(doc(db, 'members', myEmail), (s) => setIsMember(s.exists()), () => setIsMember(false));
+  }, [myEmail]);
+
+  useEffect(() => {
+    if (!isMember) return;
+    const subs = [
+      onSnapshot(collection(db, 'members'), (s) => setMembers(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
+      onSnapshot(query(collection(db, 'receipts'), orderBy('date', 'desc')), (s) =>
+        setReceipts(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, 'settlements'), (s) => setSettlements(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
+    ];
+    return () => subs.forEach((u) => u());
+  }, [isMember]);
+
+  const nameOf = useMemo(() => {
+    const m = Object.fromEntries(members.map((x) => [x.id, x.name]));
+    return (e) => m[e] || e?.split('@')[0] || '?';
+  }, [members]);
+
+  const balances = useMemo(
+    () => computeBalances(receipts, settlements, members.map((m) => m.id)),
+    [receipts, settlements, members]
+  );
+
+  if (firebaseConfig.apiKey === 'PASTE_HERE')
+    return html`<div class="center login"><h2>尚未設定</h2><p>請用文字編輯器打開 index.html，在最上方貼上你的 Firebase 設定（firebaseConfig）。</p></div>`;
+  if (user === undefined) return html`<div class="center muted">載入中…</div>`;
+  if (!user)
+    return html`<div class="center login">
+      <div class="logo">🧾</div>
+      <h1>好市多分帳</h1>
+      <p class="muted">拍收據 → 分配品項 → 自動算出誰該給誰多少</p>
+      <button class="btn primary big" onClick=${() => signInWithPopup(auth, googleProvider).catch((e) => alert('登入失敗：' + e.message))}>
+        使用 Google 帳號登入
+      </button>
+    </div>`;
+  if (isMember === null) return html`<div class="center muted">確認成員資格中…</div>`;
+  if (!isMember)
+    return html`<div class="center login">
+      <h2>尚未加入</h2>
+      <p>你的帳號 <b>${myEmail}</b> 還不在成員名單中。<br />請已加入的成員到「成員」頁把這個 Gmail 加進去。</p>
+      <button class="btn" onClick=${() => signOut(auth)}>換一個帳號</button>
+    </div>`;
+
+  if (editing)
+    return html`<${ReceiptEditor}
+      initial=${editing === 'new' ? null : editing}
+      members=${members} receipts=${receipts} myEmail=${myEmail} nameOf=${nameOf}
+      onClose=${() => setEditing(null)} />`;
+
+  const todo =
+    settlements.filter((s) => s.status === 'pending' &&
+      ((s.from === myEmail && !s.fromConfirmed) || (s.to === myEmail && !s.toConfirmed))).length +
+    suggestTransfers(balances).filter((t) => t.from === myEmail &&
+      !settlements.some((s) => s.status === 'pending' && s.from === t.from && s.to === t.to)).length;
+
+  return html`<div class="app">
+    <header class="topbar">
+      <div class="title">🧾 好市多分帳</div>
+      <button class="link" onClick=${() => signOut(auth)} title=${myEmail}>${nameOf(myEmail)}・登出</button>
+    </header>
+    <main>
+      ${tab === 'receipts' && html`<${ReceiptList} receipts=${receipts} nameOf=${nameOf}
+          onNew=${() => setEditing('new')} onOpen=${(r) => setEditing(r)} />`}
+      ${tab === 'settle' && html`<${Settle} balances=${balances} receipts=${receipts} settlements=${settlements}
+          members=${members} myEmail=${myEmail} nameOf=${nameOf} />`}
+      ${tab === 'members' && html`<${Members} members=${members} myEmail=${myEmail} balances=${balances} />`}
+    </main>
+    <nav class="tabs">
+      <button class=${tab === 'receipts' ? 'on' : ''} onClick=${() => setTab('receipts')}><span>🧾</span>收據</button>
+      <button class=${tab === 'settle' ? 'on' : ''} onClick=${() => setTab('settle')}>
+        <span>💸</span>結算${todo > 0 && html`<i class="badge">${todo}</i>`}
+      </button>
+      <button class=${tab === 'members' ? 'on' : ''} onClick=${() => setTab('members')}><span>👥</span>成員</button>
+    </nav>
+  </div>`;
+}
+
+// ============================================================
+// 收據列表
+// ============================================================
+function ReceiptList({ receipts, nameOf, onNew, onOpen }) {
+  return html`
+    <button class="btn primary block big" onClick=${onNew}>📷 新增收據</button>
+    ${receipts.length === 0 && html`<p class="center muted">還沒有收據。拍下好市多收據開始分帳吧！</p>`}
+    <ul class="list">
+      ${receipts.map((r) => html`
+        <li key=${r.id} class="card receipt" onClick=${() => onOpen(r)}>
+          <div class="row between">
+            <div><b>${r.date}</b> <span class="muted">${r.store}</span></div>
+            <b class="amount">${fmt(receiptTotal(r))}</b>
+          </div>
+          <div class="row between small">
+            <span>💳 ${nameOf(r.payer)} 先付</span>
+            <span class="muted">${r.items?.length || 0} 項</span>
+          </div>
+          <div class="shares">
+            ${Object.entries(receiptShares(r)).map(([e, v]) =>
+              html`<span key=${e} class=${e === r.payer ? 'pill payer' : 'pill'}>${nameOf(e)} ${fmt(v)}</span>`)}
+          </div>
+        </li>`)}
+    </ul>`;
+}
+
+// ============================================================
+// 新增／編輯收據
+// ============================================================
+function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose }) {
+  const [date, setDate] = useState(initial?.date || today());
+  const [store, setStore] = useState(initial?.store || '');
+  const [payer, setPayer] = useState(initial?.payer || myEmail);
+  const [items, setItems] = useState(() => (initial?.items || []).map((it) => ({ ...it, _id: newId() })));
+  const [printedTotal, setPrintedTotal] = useState(initial?.printedTotal || 0);
+  const [previews, setPreviews] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const fileRef = useRef();
+
+  const used = new Set([payer, ...items.flatMap((i) => i.assignees || [])]);
+  const people = members.filter((m) => m.active !== false || used.has(m.id));
+  const activeIds = members.filter((m) => m.active !== false).map((m) => m.id);
+  const memory = useMemo(() => buildAssignMemory(receipts), [receipts]);
+
+  const total = receiptTotal({ items });
+  const shares = receiptShares({ items });
+  const unassigned = items.filter((it) => !it.assignees?.length).length;
+  const mismatch = printedTotal > 0 && items.length > 0 && Math.abs(printedTotal - total) >= 1;
+
+  async function onFiles(e) {
+    const files = [...(e.target.files || [])].slice(0, 4);
+    e.target.value = '';
+    if (!files.length) return;
+    setErr(''); setBusy(true);
+    try {
+      const imgs = await Promise.all(files.map((f) => fileToJpeg(f, files.length > 1 ? 1600 : 2200)));
+      setPreviews(imgs.map((i) => i.preview));
+      const data = await parseReceipt(imgs);
+      if (data.date) setDate(data.date);
+      if (data.store) setStore(data.store);
+      setPrintedTotal(data.printedTotal);
+      setItems(data.items.map((it) => {
+        const remembered = (memory[it.code] || []).filter((x) => activeIds.includes(x));
+        return { ...it, _id: newId(), assignees: remembered, _remembered: remembered.length > 0 };
+      }));
+      if (!data.items.length) setErr('沒有辨識到品項，請重拍或手動輸入');
+    } catch (e2) {
+      setErr('辨識失敗：' + (e2.message || e2));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const patch = (id, p) => setItems((xs) => xs.map((x) => (x._id === id ? { ...x, ...p } : x)));
+  const toggle = (id, email) => setItems((xs) => xs.map((x) => {
+    if (x._id !== id) return x;
+    const a = new Set(x.assignees || []);
+    a.has(email) ? a.delete(email) : a.add(email);
+    return { ...x, assignees: [...a], _remembered: false };
+  }));
+  const fillUnassigned = (emails) =>
+    setItems((xs) => xs.map((x) => (x.assignees?.length ? x : { ...x, assignees: [...emails] })));
+  const addItem = () =>
+    setItems((xs) => [...xs, { _id: newId(), name: '', code: '', qty: 1, amount: 0, discount: 0, assignees: [] }]);
+
+  async function save() {
+    if (!items.length) return setErr('至少要有一個品項');
+    if (unassigned) return setErr(`還有 ${unassigned} 個品項沒有指派給任何人`);
+    setBusy(true); setErr('');
+    const payload = {
+      date, store: store.trim(), payer, total,
+      printedTotal: Number(printedTotal) || 0,
+      items: items.map(({ name, code, qty, amount, discount, assignees }) => ({
+        name: (name || '').trim() || '（未命名）',
+        code: (code || '').trim(),
+        qty: Number(qty) || 1,
+        amount: Math.round(Number(amount) || 0),
+        discount: Math.round(Number(discount) || 0),
+        assignees: assignees || [],
+      })),
+      updatedAt: serverTimestamp(),
+      updatedBy: myEmail,
+    };
+    try {
+      if (initial?.id) await updateDoc(doc(db, 'receipts', initial.id), payload);
+      else await addDoc(collection(db, 'receipts'), { ...payload, createdAt: serverTimestamp(), createdBy: myEmail });
+      onClose();
+    } catch (e) {
+      setErr('儲存失敗：' + e.message);
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!confirm('確定要刪除這張收據？相關金額會從結算中移除。')) return;
+    await deleteDoc(doc(db, 'receipts', initial.id));
+    onClose();
+  }
+
+  return html`<div class="app editor">
+    <header class="topbar">
+      <button class="link" onClick=${onClose}>← 返回</button>
+      <div class="title">${initial ? '編輯收據' : '新增收據'}</div>
+      ${initial ? html`<button class="link danger" onClick=${remove}>刪除</button>` : html`<span style="width:40px"></span>`}
+    </header>
+    <main>
+      <section class="card">
+        <h3>① 收據照片</h3>
+        <input ref=${fileRef} type="file" accept="image/*" multiple hidden onChange=${onFiles} />
+        <div class="row gap">
+          <button class="btn primary" disabled=${busy} onClick=${() => fileRef.current.click()}>
+            📷 ${items.length ? '重新拍照辨識' : '拍照／選擇照片'}
+          </button>
+          ${!items.length && html`<button class="btn" onClick=${addItem}>手動輸入</button>`}
+        </div>
+        <p class="hint">收據太長可以分段拍，一次選最多 4 張。辨識後請核對金額。</p>
+        ${previews.length > 0 && html`<div class="previews">${previews.map((p) => html`<img src=${p} />`)}</div>`}
+        ${busy && html`<div class="loading">處理中，約 5–20 秒…</div>`}
+      </section>
+
+      <section class="card">
+        <h3>② 誰付的錢？</h3>
+        <div class="chips">
+          ${people.map((m) => html`<button key=${m.id} class=${'chip ' + (payer === m.id ? 'on payer' : '')}
+              onClick=${() => setPayer(m.id)}>${payer === m.id ? '💳 ' : ''}${m.name}</button>`)}
+        </div>
+        <div class="row gap fields">
+          <label>日期<input type="date" value=${date} onInput=${(e) => setDate(e.target.value)} /></label>
+          <label>分店／備註<input value=${store} placeholder="例：台南店" onInput=${(e) => setStore(e.target.value)} /></label>
+        </div>
+      </section>
+
+      ${items.length > 0 && html`<section class="card">
+        <h3>③ 品項歸屬</h3>
+        <div class="quick">
+          <span class="muted">未指派的全部給：</span>
+          <div class="chips">
+            ${members.filter((m) => m.active !== false).map((m) =>
+              html`<button key=${m.id} class="chip small" onClick=${() => fillUnassigned([m.id])}>${m.name}</button>`)}
+            <button class="chip small" onClick=${() => fillUnassigned(activeIds)}>全員平分</button>
+          </div>
+        </div>
+        <ul class="items">
+          ${items.map((it) => {
+            const net = itemNet(it), n = it.assignees?.length || 0;
+            return html`<li key=${it._id} class=${n === 0 ? 'item unassigned' : 'item'}>
+              <div class="item-top">
+                <input class="name" value=${it.name} placeholder="品名" onInput=${(e) => patch(it._id, { name: e.target.value })} />
+                <button class="x" title="刪除品項" onClick=${() => setItems((xs) => xs.filter((x) => x._id !== it._id))}>✕</button>
+              </div>
+              <div class="item-nums">
+                <label>金額<input type="number" inputmode="numeric" value=${it.amount}
+                  onInput=${(e) => patch(it._id, { amount: e.target.value })} /></label>
+                <label>折扣<input type="number" inputmode="numeric" value=${it.discount}
+                  onInput=${(e) => patch(it._id, { discount: e.target.value })} /></label>
+                <div class="net"><small>實付</small><b>${fmt(net)}</b>
+                  ${Number(it.discount) > 0 && html`<s>${fmt(it.amount)}</s>`}</div>
+              </div>
+              <div class="chips">
+                ${people.map((m) => html`<button key=${m.id} class=${'chip ' + (it.assignees?.includes(m.id) ? 'on' : '')}
+                    onClick=${() => toggle(it._id, m.id)}>${m.name}</button>`)}
+                <button class="chip ghost" onClick=${() => patch(it._id, { assignees: [...activeIds], _remembered: false })}>全員</button>
+              </div>
+              <div class="item-foot">
+                ${it.code && html`<span class="code">#${it.code}</span>`}
+                ${it._remembered && html`<span class="tag">依上次分配</span>`}
+                ${n > 1 && html`<span class="muted">每人約 ${fmt(net / n)}</span>`}
+                ${n === 0 && html`<span class="warn">尚未指派</span>`}
+              </div>
+            </li>`;
+          })}
+        </ul>
+        <button class="btn block" onClick=${addItem}>＋ 新增品項</button>
+      </section>`}
+      <div style="height:190px"></div>
+    </main>
+
+    <footer class="summary">
+      <div class="sum-row">
+        <span>合計 <b>${fmt(total)}</b>
+          ${printedTotal > 0 && html`<small class="muted">（收據 ${fmt(printedTotal)}）</small>`}</span>
+        <span class="muted">付款：${nameOf(payer)}</span>
+      </div>
+      ${mismatch && html`<div class="warn">⚠ 合計與收據總額不符，請檢查是否有漏掉或辨識錯的品項</div>`}
+      <div class="sum-people">
+        ${Object.entries(shares).map(([e, v]) => html`<span key=${e}>${nameOf(e)} <b>${fmt(v)}</b></span>`)}
+        ${unassigned > 0 && html`<span class="warn">未指派 ${unassigned} 項</span>`}
+      </div>
+      ${err && html`<div class="error">${err}</div>`}
+      <button class="btn primary block" disabled=${busy || !items.length} onClick=${save}>
+        ${busy ? '處理中…' : '儲存收據'}
+      </button>
+    </footer>
+  </div>`;
+}
+
+// ============================================================
+// 結算（誰給誰、雙方確認、個人統計）
+// ============================================================
+function Settle({ balances, receipts, settlements, members, myEmail, nameOf }) {
+  const transfers = suggestTransfers(balances);
+  const pending = settlements.filter((s) => s.status === 'pending');
+  const done = settlements.filter((s) => s.status === 'done')
+    .sort((a, b) => (b.doneAt?.seconds || 0) - (a.doneAt?.seconds || 0));
+  const [paying, setPaying] = useState(null);
+  const [err, setErr] = useState('');
+  const [month, setMonth] = useState('all');
+  const [showDone, setShowDone] = useState(false);
+  const byMonth = useMemo(() => spendingByMonth(receipts), [receipts]);
+  const months = Object.keys(byMonth).sort().reverse();
+
+  // 由付款方或收款方發起，先勾自己那一方
+  async function start() {
+    setErr('');
+    const amount = Math.round(Number(paying.amount));
+    if (!(amount > 0)) return setErr('金額需大於 0');
+    const iAmFrom = paying.from === myEmail;
+    try {
+      await addDoc(collection(db, 'settlements'), {
+        from: paying.from, to: paying.to, amount,
+        fromConfirmed: iAmFrom, toConfirmed: !iAmFrom,
+        status: 'pending', createdBy: myEmail, createdAt: serverTimestamp(),
+      });
+      setPaying(null);
+    } catch (e) { setErr('失敗：' + e.message); }
+  }
+
+  // 另一方確認（交易，避免兩人同時按造成狀態錯亂）
+  async function confirmSide(s) {
+    setErr('');
+    try {
+      await runTransaction(db, async (tx) => {
+        const ref = doc(db, 'settlements', s.id);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('紀錄已不存在');
+        const d = snap.data();
+        if (d.status !== 'pending') return;
+        const fromConfirmed = d.fromConfirmed || d.from === myEmail;
+        const toConfirmed = d.toConfirmed || d.to === myEmail;
+        const both = fromConfirmed && toConfirmed;
+        tx.update(ref, { fromConfirmed, toConfirmed, status: both ? 'done' : 'pending', ...(both ? { doneAt: serverTimestamp() } : {}) });
+      });
+    } catch (e) { setErr('確認失敗：' + e.message); }
+  }
+
+  async function cancel(s) {
+    if (confirm('取消這筆還款紀錄？')) await deleteDoc(doc(db, 'settlements', s.id));
+  }
+
+  const rows = members.filter((m) => m.active !== false || balances[m.id]?.balance)
+    .map((m) => ({ ...m, ...(balances[m.id] || {}) }));
+
+  return html`
+    <section class="card">
+      <h3>💸 誰要給誰</h3>
+      ${transfers.length === 0 && html`<p class="muted">目前帳都結清了 🎉</p>`}
+      <ul class="debts">
+        ${transfers.map((t) => {
+          const p = pending.find((s) => s.from === t.from && s.to === t.to);
+          const mine = t.from === myEmail || t.to === myEmail;
+          const editing = paying && paying.from === t.from && paying.to === t.to;
+          return html`<li key=${t.from + t.to} class=${mine ? 'debt mine' : 'debt'}>
+            <div class="debt-line"><b>${nameOf(t.from)}</b><span class="arrow">→</span><b>${nameOf(t.to)}</b>
+              <span class="amount">${fmt(t.amount)}</span></div>
+            ${p ? html`<div class="muted small">已有一筆 ${fmt(p.amount)} 的還款等待確認（見下方）</div>`
+              : editing ? html`<div class="row gap">
+                  <input type="number" inputmode="numeric" value=${paying.amount}
+                    onInput=${(e) => setPaying({ ...paying, amount: e.target.value })} />
+                  <button class="btn primary" onClick=${start}>送出</button>
+                  <button class="btn" onClick=${() => setPaying(null)}>取消</button></div>`
+              : mine ? html`<button class="btn primary" onClick=${() => setPaying({ ...t })}>
+                  ${t.from === myEmail ? '我已付款' : '我已收到款項'}</button>`
+              : html`<div class="muted small">等待兩人處理</div>`}
+          </li>`;
+        })}
+      </ul>
+      <p class="hint">付款後由任一方按下按鈕，再由另一方確認；<b>雙方都確認後</b>這筆應付款才會消失。可修改金額來記錄部分還款。</p>
+      ${err && html`<div class="error">${err}</div>`}
+    </section>
+
+    ${pending.length > 0 && html`<section class="card">
+      <h3>⏳ 待雙方確認</h3>
+      <ul class="debts">
+        ${pending.map((s) => {
+          const needMe = (s.from === myEmail && !s.fromConfirmed) || (s.to === myEmail && !s.toConfirmed);
+          const party = s.from === myEmail || s.to === myEmail;
+          return html`<li key=${s.id} class=${needMe ? 'debt need' : 'debt'}>
+            <div class="debt-line"><b>${nameOf(s.from)}</b><span class="arrow">→</span><b>${nameOf(s.to)}</b>
+              <span class="amount">${fmt(s.amount)}</span></div>
+            <div class="confirms">
+              <span>${s.fromConfirmed ? '✅' : '⬜'} ${nameOf(s.from)} 已付款</span>
+              <span>${s.toConfirmed ? '✅' : '⬜'} ${nameOf(s.to)} 已收款</span>
+            </div>
+            <div class="row gap">
+              ${needMe && html`<button class="btn primary" onClick=${() => confirmSide(s)}>
+                ${s.from === myEmail ? '確認我已付款' : '確認我已收到'}</button>`}
+              ${party && html`<button class="btn" onClick=${() => cancel(s)}>取消</button>`}
+            </div>
+          </li>`;
+        })}
+      </ul>
+    </section>`}
+
+    <section class="card">
+      <h3>📊 個人帳務</h3>
+      <table class="stats">
+        <thead><tr><th></th><th>消費</th><th>先付</th><th>淨額</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => html`<tr key=${r.id}>
+            <td>${r.name}</td><td>${fmt(r.spent || 0)}</td><td>${fmt(r.paid || 0)}</td>
+            <td class=${r.balance > 0 ? 'pos' : r.balance < 0 ? 'neg' : ''}>${r.balance > 0 ? '+' : ''}${fmt(r.balance || 0)}</td>
+          </tr>`)}
+        </tbody>
+      </table>
+      <p class="hint">淨額 = 先付 − 消費 ± 已確認的還款。正數代表別人欠他，負數代表他欠別人。</p>
+      <div class="row between month-head">
+        <b>各月消費</b>
+        <select value=${month} onChange=${(e) => setMonth(e.target.value)}>
+          <option value="all">全部月份</option>
+          ${months.map((m) => html`<option value=${m}>${m}</option>`)}
+        </select>
+      </div>
+      <table class="stats"><tbody>
+        ${(month === 'all' ? months : [month]).map((m) => html`<tr key=${m}>
+          <td>${m}</td>
+          <td colspan="3"><div class="shares">
+            ${Object.entries(byMonth[m] || {}).map(([e, v]) => html`<span class="pill">${nameOf(e)} ${fmt(v)}</span>`)}
+          </div></td>
+        </tr>`)}
+      </tbody></table>
+    </section>
+
+    ${done.length > 0 && html`<section class="card">
+      <button class="link" onClick=${() => setShowDone(!showDone)}>${showDone ? '▾' : '▸'} 已完成的還款（${done.length}）</button>
+      ${showDone && html`<ul class="history">
+        ${done.map((s) => html`<li key=${s.id}>
+          <span>${nameOf(s.from)} → ${nameOf(s.to)}</span><b>${fmt(s.amount)}</b>
+          <small class="muted">${s.doneAt?.toDate?.().toLocaleDateString('zh-TW') || ''}</small>
+        </li>`)}
+      </ul>`}
+    </section>`}`;
+}
+
+// ============================================================
+// 成員
+// ============================================================
+function Members({ members, myEmail, balances }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [err, setErr] = useState('');
+
+  async function add(e) {
+    e.preventDefault();
+    setErr('');
+    const em = email.trim().toLowerCase();
+    if (!name.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return setErr('請填寫名字與正確的 Gmail');
+    if (members.some((m) => m.id === em)) return setErr('這個 Gmail 已經是成員了');
+    try {
+      await setDoc(doc(db, 'members', em), { name: name.trim(), email: em, active: true, createdAt: serverTimestamp(), createdBy: myEmail });
+      setName(''); setEmail('');
+    } catch (e2) { setErr('新增失敗：' + e2.message); }
+  }
+  async function rename(m) {
+    const n = prompt('新的顯示名稱', m.name);
+    if (n && n.trim()) await updateDoc(doc(db, 'members', m.id), { name: n.trim() });
+  }
+  async function toggleActive(m) {
+    const bal = balances[m.id]?.balance || 0;
+    if (m.active !== false && bal !== 0 &&
+      !confirm(`${m.name} 還有 ${fmt(bal)} 未結清，仍要停用嗎？（停用後不會出現在新收據的選項中，但舊帳保留）`)) return;
+    await updateDoc(doc(db, 'members', m.id), { active: m.active === false });
+  }
+
+  const sorted = members.slice().sort((a, b) => (a.active === false) - (b.active === false));
+  return html`
+    <section class="card">
+      <h3>👥 成員</h3>
+      <ul class="members">
+        ${sorted.map((m) => html`<li key=${m.id} class=${m.active === false ? 'inactive' : ''}>
+          <div>
+            <b>${m.name}</b> ${m.id === myEmail && html`<span class="tag">我</span>`}
+            ${m.active === false && html`<span class="tag gray">已停用</span>`}
+            <div class="muted small">${m.id}</div>
+          </div>
+          <div class="row gap">
+            <button class="link" onClick=${() => rename(m)}>改名</button>
+            ${m.id !== myEmail && html`<button class="link" onClick=${() => toggleActive(m)}>${m.active === false ? '啟用' : '停用'}</button>`}
+          </div>
+        </li>`)}
+      </ul>
+    </section>
+    <section class="card">
+      <h3>＋ 新增成員</h3>
+      <form onSubmit=${add} class="add-member">
+        <input placeholder="顯示名稱（例：小明）" value=${name} onInput=${(e) => setName(e.target.value)} />
+        <input placeholder="對方的 Gmail" type="email" value=${email} onInput=${(e) => setEmail(e.target.value)} />
+        <button class="btn primary">新增</button>
+      </form>
+      <p class="hint">加入後，對方用這個 Google 帳號登入網站即可使用。</p>
+      ${err && html`<div class="error">${err}</div>`}
+    </section>`;
+}
+
+render(html`<${App} />`, document.getElementById('root'));
+
+</script>
+</body>
+</html>
