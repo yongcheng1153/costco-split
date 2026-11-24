@@ -195,6 +195,8 @@ const firebaseConfig = {
   messagingSenderId: '673832536334',
   appId: '1:673832536334:web:4195a5be8fddfe0665ef5f',
 };
+// ② App Check（保護 Gemini 額度不被盜用）：貼上 Fraud Defense（reCAPTCHA Enterprise）的金鑰 ID
+const RECAPTCHA_SITE_KEY = '6LfAzC8uAAAAAPXjcsKlkNzLoD16jnpz4h9OaQLV';
 // 收據辨識使用的 Gemini 模型（依序嘗試，前一個不能用就換下一個）
 const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash'];
 // ============================================================
@@ -207,11 +209,15 @@ import {
   deleteDoc, runTransaction, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
 import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-ai.js';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app-check.js';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const ai = getAI(app, { backend: new GoogleAIBackend() });
+if (RECAPTCHA_SITE_KEY) {
+  initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
+}
+const ai = getAI(app, { backend: new GoogleAIBackend(), useLimitedUseAppCheckTokens: !!RECAPTCHA_SITE_KEY });
 const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
@@ -566,7 +572,10 @@ function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose })
       }));
       if (!data.items.length) setErr('沒有辨識到品項，請重拍或手動輸入');
     } catch (e2) {
-      setErr('辨識失敗：' + (e2.message || e2));
+      const m = String(e2.message || e2);
+      setErr(/App Check/i.test(m)
+        ? '辨識失敗：App Check 驗證沒通過。請確認 index.html 已填入 RECAPTCHA_SITE_KEY，且 Firebase App Check 已用 Fraud Defense 註冊這個網頁。'
+        : '辨識失敗：' + m);
     } finally {
       setBusy(false);
     }
