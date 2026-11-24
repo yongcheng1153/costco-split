@@ -208,7 +208,7 @@ import {
   getFirestore, collection, doc, onSnapshot, query, orderBy, addDoc, setDoc, updateDoc,
   deleteDoc, runTransaction, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
-import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-ai.js';
+import { getAI, getGenerativeModel, GoogleAIBackend, Schema, ThinkingLevel } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-ai.js';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app-check.js';
 
 const app = initializeApp(firebaseConfig);
@@ -355,13 +355,24 @@ async function parseReceipt(images) {
     PROMPT + (images.length > 1 ? '\n\n以下多張照片是同一張收據的不同段落（依序），重疊的部分不要重複計算。' : ''),
     ...images.map((im) => ({ inlineData: { mimeType: 'image/jpeg', data: im.data } })),
   ];
+  // 依序嘗試：先用「少量思考」加快速度，不支援就改用預設設定，再換下一個模型
+  const attempts = GEMINI_MODELS.flatMap((m) => [{ m, think: true }, { m, think: false }]);
   let lastErr;
-  for (const name of GEMINI_MODELS) {
+  for (const a of attempts) {
     try {
-      const model = getGenerativeModel(ai, {
-        model: name,
-        generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: RECEIPT_SCHEMA },
-      });
+      const model = getGenerativeModel(
+        ai,
+        {
+          model: a.m,
+          generationConfig: {
+            temperature: 0,
+            responseMimeType: 'application/json',
+            responseSchema: RECEIPT_SCHEMA,
+            ...(a.think ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : {}),
+          },
+        },
+        { timeout: 120000 }
+      );
       const res = await model.generateContent(parts);
       const p = JSON.parse(res.response.text());
       return {
@@ -380,7 +391,9 @@ async function parseReceipt(images) {
       };
     } catch (e) {
       lastErr = e;
-      if (!/not found|404|not supported/i.test(e.message || '')) break; // 只有模型不存在才換下一個
+      console.warn('辨識嘗試失敗', a, e);
+      // App Check / 權限 / 額度問題換模型也沒用，直接回報
+      if (/App Check|401|403|429|quota|permission/i.test(String(e.message || e))) break;
     }
   }
   throw lastErr;
@@ -542,7 +555,14 @@ function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose })
   const [previews, setPreviews] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [elapsed, setElapsed] = useState(0);
   const fileRef = useRef();
+  useEffect(() => {
+    if (!busy) return;
+    setElapsed(0);
+    const t = setInterval(() => setElapsed((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
 
   const used = new Set([payer, ...items.flatMap((i) => i.assignees || [])]);
   const people = members.filter((m) => m.active !== false || used.has(m.id));
@@ -560,7 +580,7 @@ function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose })
     if (!files.length) return;
     setErr(''); setBusy(true);
     try {
-      const imgs = await Promise.all(files.map((f) => fileToJpeg(f, files.length > 1 ? 1600 : 2200)));
+      const imgs = await Promise.all(files.map((f) => fileToJpeg(f, files.length > 1 ? 1500 : 1800)));
       setPreviews(imgs.map((i) => i.preview));
       const data = await parseReceipt(imgs);
       if (data.date) setDate(data.date);
@@ -575,6 +595,8 @@ function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose })
       const m = String(e2.message || e2);
       setErr(/App Check/i.test(m)
         ? '辨識失敗：App Check 驗證沒通過。請確認 index.html 已填入 RECAPTCHA_SITE_KEY，且 Firebase App Check 已用 Fraud Defense 註冊這個網頁。'
+        : /abort|timeout|network|load failed|fetch/i.test(m)
+        ? '辨識失敗：連線中斷（可能切換了 App、螢幕鎖定或網路不穩）。請停留在此畫面再試一次。（' + m + '）'
         : '辨識失敗：' + m);
     } finally {
       setBusy(false);
@@ -645,7 +667,7 @@ function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose })
         </div>
         <p class="hint">收據太長可以分段拍，一次選最多 4 張。辨識後請核對金額。</p>
         ${previews.length > 0 && html`<div class="previews">${previews.map((p) => html`<img src=${p} />`)}</div>`}
-        ${busy && html`<div class="loading">處理中，約 5–20 秒…</div>`}
+        ${busy && html`<div class="loading">辨識中… ${elapsed} 秒<br /><small>請停留在這個畫面，不要切換 App 或鎖螢幕</small></div>`}
       </section>
 
       <section class="card">
