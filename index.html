@@ -163,7 +163,7 @@ main { padding: 12px; }
 .confirms { display: flex; gap: 14px; font-size: 14px; flex-wrap: wrap; }
 .stats { width: 100%; border-collapse: collapse; font-size: 14px; }
 .stats th, .stats td { padding: 8px 4px; border-bottom: 1px solid var(--line); text-align: right; }
-.stats th:first-child, .stats td:first-child { text-align: left; white-space: nowrap; }
+.stats th:first-child, .stats td:first-child { text-align: left; }
 .stats td .shares { justify-content: flex-end; margin: 0; }
 .pos { color: var(--green); font-weight: 700; }
 .neg { color: var(--red); font-weight: 700; }
@@ -179,140 +179,93 @@ main { padding: 12px; }
 .members li.inactive { opacity: .55; }
 .add-member { display: flex; flex-direction: column; gap: 8px; }
 
+.pill.me { background: #eef1f4; color: var(--muted); }
+.pill.paid { background: #e3f5ec; color: var(--green); }
+.ok { color: var(--green); }
+.debt.done { border-color: #bfe5d1; background: #f3fbf7; }
+.debt.done .amount { color: var(--green); }
+.grow { flex: 1; min-width: 0; }
+.grow, .full { border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; }
+.full { width: 100%; }
+.diag { white-space: pre-wrap; word-break: break-all; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px; font-size: 13px; margin-top: 10px; }
+.modal { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.8); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; color: #fff; }
+.modal img { max-width: 100%; max-height: 80vh; border-radius: 12px; }
+.modal p { margin: 0 0 12px; font-size: 14px; }
+.modal-close { margin-top: 14px; }
+.stats td { vertical-align: top; }
+
 </style>
 </head>
 <body>
 <div id="root"><div class="center muted">載入中…</div></div>
 <script type="module">
-// ============================================================
-// ① 只需要修改這裡：貼上 Firebase「專案設定 → 一般 → 你的應用程式」的 firebaseConfig
-// ============================================================
-const firebaseConfig = {
-  apiKey: 'AIzaSyCWZBSbJkwN4XK0pfuBN4eyoM7Q328J_l4',
-  authDomain: 'happy-in-coastco.firebaseapp.com',
-  projectId: 'happy-in-coastco',
-  storageBucket: 'happy-in-coastco.firebasestorage.app',
-  messagingSenderId: '673832536334',
-  appId: '1:673832536334:web:4195a5be8fddfe0665ef5f',
-};
-// ② App Check（保護 Gemini 額度不被盜用）：貼上 Fraud Defense（reCAPTCHA Enterprise）的金鑰 ID
-const RECAPTCHA_SITE_KEY = '6LfAzC8uAAAAAPXjcsKlkNzLoD16jnpz4h9OaQLV';
-// 收據辨識使用的 Gemini 模型（依序嘗試，前一個不能用就換下一個）
-const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-3.6-flash'];
-// ============================================================
-
 import { html, render, useState, useEffect, useMemo, useRef } from 'https://unpkg.com/htm@3.1.1/preact/standalone.module.js';
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js';
-import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js';
-import {
-  getFirestore, collection, doc, onSnapshot, query, orderBy, addDoc, setDoc, updateDoc,
-  deleteDoc, runTransaction, serverTimestamp,
-} from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js';
-import { getAI, getGenerativeModel, GoogleAIBackend, Schema, ThinkingLevel } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-ai.js';
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'https://www.gstatic.com/firebasejs/13.4.0/firebase-app-check.js';
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-if (RECAPTCHA_SITE_KEY) {
-  initializeAppCheck(app, { provider: new ReCaptchaEnterpriseProvider(RECAPTCHA_SITE_KEY), isTokenAutoRefreshEnabled: true });
-}
-const ai = getAI(app, { backend: new GoogleAIBackend(), useLimitedUseAppCheckTokens: !!RECAPTCHA_SITE_KEY });
-const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 // ============================================================
-// 分帳計算（金額一律用整數新台幣）
+// 本機儲存（資料只存在這支手機的瀏覽器裡）
+// ============================================================
+const LS = {
+  get(k, d) {
+    try { const v = localStorage.getItem('cs_' + k); return v == null ? d : JSON.parse(v); } catch { return d; }
+  },
+  set(k, v) {
+    try { localStorage.setItem('cs_' + k, JSON.stringify(v)); } catch (e) { alert('儲存失敗：' + e.message); }
+  },
+};
+function usePersist(key, init) {
+  const [v, setV] = useState(() => LS.get(key, init));
+  useEffect(() => LS.set(key, v), [key, v]);
+  return [v, setV];
+}
+
+// ============================================================
+// 分帳計算（整數新台幣）
 // ============================================================
 const itemNet = (it) => Math.round((Number(it.amount) || 0) - (Number(it.discount) || 0));
 const receiptTotal = (r) => (r.items || []).reduce((s, it) => s + itemNet(it), 0);
 
 // 平分整數金額，零頭依 offset 輪流分配，避免總是同一人多付 1 元
-function splitAmount(amount, assignees, offset = 0) {
-  const n = assignees.length, out = {};
+function splitAmount(amount, ids, offset = 0) {
+  const n = ids.length, out = {};
   if (!n) return out;
   const sign = amount < 0 ? -1 : 1, abs = Math.abs(amount), base = Math.floor(abs / n);
   let rem = abs - base * n;
-  assignees.forEach((p) => (out[p] = base));
-  for (let i = 0; i < n && rem > 0; i++, rem--) out[assignees[(offset + i) % n]] += 1;
+  ids.forEach((p) => (out[p] = base));
+  for (let i = 0; i < n && rem > 0; i++, rem--) out[ids[(offset + i) % n]] += 1;
   for (const k in out) out[k] *= sign;
   return out;
 }
-
+// 每人負擔 { id: 金額 }
 function receiptShares(r) {
-  const shares = {};
+  const s = {};
   (r.items || []).forEach((it, idx) => {
-    for (const [p, v] of Object.entries(splitAmount(itemNet(it), it.assignees || [], idx)))
-      shares[p] = (shares[p] || 0) + v;
+    for (const [p, v] of Object.entries(splitAmount(itemNet(it), it.assignees || [], idx))) s[p] = (s[p] || 0) + v;
   });
-  return shares;
+  return s;
 }
-
-// balance = 先付 − 消費 + 已付還款 − 已收還款（只算雙方都確認的）
-function computeBalances(receipts, settlements, emails = []) {
-  const acc = {};
-  const ensure = (e) => (acc[e] ||= { spent: 0, paid: 0, sent: 0, received: 0, balance: 0 });
-  emails.forEach(ensure);
-  for (const r of receipts) {
-    ensure(r.payer).paid += receiptTotal(r);
-    for (const [p, v] of Object.entries(receiptShares(r))) ensure(p).spent += v;
-  }
-  for (const s of settlements) {
-    if (s.status !== 'done') continue;
-    ensure(s.from).sent += s.amount;
-    ensure(s.to).received += s.amount;
-  }
-  for (const a of Object.values(acc)) a.balance = a.paid - a.spent + a.sent - a.received;
-  return acc;
-}
-
-// 用最少筆數的轉帳結清
-function suggestTransfers(balances) {
-  const d = [], c = [];
-  for (const [email, a] of Object.entries(balances)) {
-    if (a.balance < 0) d.push({ email, amt: -a.balance });
-    else if (a.balance > 0) c.push({ email, amt: a.balance });
-  }
-  const by = (x, y) => y.amt - x.amt || x.email.localeCompare(y.email);
-  d.sort(by); c.sort(by);
+// 某人的明細 [{ name, net, n, share }]
+function personLines(r, id) {
   const out = [];
-  let i = 0, j = 0;
-  while (i < d.length && j < c.length) {
-    const pay = Math.min(d[i].amt, c[j].amt);
-    if (pay > 0) out.push({ from: d[i].email, to: c[j].email, amount: pay });
-    d[i].amt -= pay; c[j].amt -= pay;
-    if (!d[i].amt) i++;
-    if (!c[j].amt) j++;
-  }
+  (r.items || []).forEach((it, idx) => {
+    const a = it.assignees || [];
+    if (!a.includes(id)) return;
+    out.push({ name: it.name, amount: Number(it.amount) || 0, discount: Number(it.discount) || 0, net: itemNet(it), n: a.length, share: splitAmount(itemNet(it), a, idx)[id] });
+  });
   return out;
 }
-
-function spendingByMonth(receipts) {
-  const out = {};
-  for (const r of receipts) {
-    const m = (r.date || '').slice(0, 7) || '未知';
-    out[m] ||= {};
-    for (const [p, v] of Object.entries(receiptShares(r))) out[m][p] = (out[m][p] || 0) + v;
-  }
-  return out;
-}
-
-// 商品編號 → 上次分配給誰
 function buildAssignMemory(receipts) {
   const mem = {};
   [...receipts].sort((a, b) => (a.date || '').localeCompare(b.date || '')).forEach((r) =>
-    (r.items || []).forEach((it) => { if (it.code && it.assignees?.length) mem[it.code] = it.assignees; })
-  );
+    (r.items || []).forEach((it) => { if (it.code && it.assignees?.length) mem[it.code] = it.assignees; }));
   return mem;
 }
-
 const fmt = (n) => (Math.round(n) < 0 ? '-' : '') + 'NT$' + Math.abs(Math.round(n)).toLocaleString('zh-TW');
 const today = () => new Date().toLocaleDateString('sv-SE');
 let seq = 0;
-const newId = () => 'i' + Date.now().toString(36) + seq++;
+const newId = () => Date.now().toString(36) + (seq++).toString(36) + Math.random().toString(36).slice(2, 5);
 
 // ============================================================
-// 收據辨識（Firebase AI Logic → Gemini）
+// 收據辨識：直接呼叫 Gemini API（金鑰只存在這支手機）
 // ============================================================
 const PROMPT = `你是台灣好市多（Costco）收據辨識助手。請讀取照片中的收據，輸出 JSON。
 
@@ -329,77 +282,89 @@ const PROMPT = `你是台灣好市多（Costco）收據辨識助手。請讀取�
 - 日期格式 YYYY-MM-DD，看不到就填空字串。
 - 看不清楚的字請盡量推測，但不要捏造不存在的商品。`;
 
-const RECEIPT_SCHEMA = Schema.object({
+const SCHEMA = {
+  type: 'OBJECT',
   properties: {
-    store: Schema.string(),
-    date: Schema.string(),
-    printedTotal: Schema.number(),
-    items: Schema.array({
-      items: Schema.object({
+    store: { type: 'STRING' },
+    date: { type: 'STRING' },
+    printedTotal: { type: 'NUMBER' },
+    items: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
         properties: {
-          name: Schema.string(),
-          code: Schema.string(),
-          qty: Schema.number(),
-          amount: Schema.number(),
-          discount: Schema.number(),
+          name: { type: 'STRING' }, code: { type: 'STRING' }, qty: { type: 'NUMBER' },
+          amount: { type: 'NUMBER' }, discount: { type: 'NUMBER' },
         },
-        optionalProperties: ['qty'],
-      }),
-    }),
+        required: ['name', 'code', 'amount', 'discount'],
+      },
+    },
   },
-  optionalProperties: ['store', 'date', 'printedTotal'],
-});
+  required: ['items'],
+};
 
-async function parseReceipt(images) {
+async function callGemini({ key, model, parts, json, think, timeoutMs }) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const generationConfig = { temperature: 0 };
+    if (json) Object.assign(generationConfig, { responseMimeType: 'application/json', responseSchema: SCHEMA });
+    if (think) generationConfig.thinkingConfig = { thinkingLevel: 'LOW' };
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const e = new Error(data?.error?.message || `HTTP ${r.status}`);
+      e.status = r.status;
+      throw e;
+    }
+    return (data?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error(`超過 ${timeoutMs / 1000} 秒沒有回應`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function parseReceipt(images, settings, onStep) {
+  if (!settings.geminiKey) throw new Error('還沒設定 Gemini 金鑰，請到「設定」頁貼上。');
   const parts = [
-    PROMPT + (images.length > 1 ? '\n\n以下多張照片是同一張收據的不同段落（依序），重疊的部分不要重複計算。' : ''),
+    { text: PROMPT + (images.length > 1 ? '\n\n以下多張照片是同一張收據的不同段落（依序），重疊的部分不要重複計算。' : '') },
     ...images.map((im) => ({ inlineData: { mimeType: 'image/jpeg', data: im.data } })),
   ];
-  // 依序嘗試：先用「少量思考」加快速度，不支援就改用預設設定，再換下一個模型
-  const attempts = GEMINI_MODELS.flatMap((m) => [{ m, think: true }, { m, think: false }]);
+  // 先用「少量思考」加快速度；模型不支援這個參數（400）就改用預設
+  const attempts = [{ think: true }, { think: false }];
   let lastErr;
-  for (const a of attempts) {
+  for (const [i, a] of attempts.entries()) {
+    onStep(i === 0 ? '辨識中' : '改用預設設定重試');
     try {
-      const model = getGenerativeModel(
-        ai,
-        {
-          model: a.m,
-          generationConfig: {
-            temperature: 0,
-            responseMimeType: 'application/json',
-            responseSchema: RECEIPT_SCHEMA,
-            ...(a.think ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } } : {}),
-          },
-        },
-        { timeout: 120000 }
-      );
-      const res = await model.generateContent(parts);
-      const p = JSON.parse(res.response.text());
+      const text = await callGemini({ key: settings.geminiKey, model: settings.model || 'gemini-flash-latest', parts, json: true, think: a.think, timeoutMs: 90000 });
+      const p = JSON.parse(text);
       return {
         store: p.store || '',
         date: /^\d{4}-\d{2}-\d{2}$/.test(p.date || '') ? p.date : '',
         printedTotal: Math.round(Number(p.printedTotal) || 0),
-        items: (p.items || [])
-          .map((it) => ({
-            name: String(it.name || '').trim(),
-            code: String(it.code || '').trim(),
-            qty: Number(it.qty) || 1,
-            amount: Math.round(Number(it.amount) || 0),
-            discount: Math.abs(Math.round(Number(it.discount) || 0)),
-          }))
-          .filter((it) => it.name || it.amount),
+        items: (p.items || []).map((it) => ({
+          name: String(it.name || '').trim(),
+          code: String(it.code || '').trim(),
+          qty: Number(it.qty) || 1,
+          amount: Math.round(Number(it.amount) || 0),
+          discount: Math.abs(Math.round(Number(it.discount) || 0)),
+        })).filter((it) => it.name || it.amount),
       };
     } catch (e) {
       lastErr = e;
-      console.warn('辨識嘗試失敗', a, e);
-      // App Check / 權限 / 額度問題換模型也沒用，直接回報
-      if (/App Check|401|403|429|quota|permission/i.test(String(e.message || e))) break;
+      if (e.status !== 400) break; // 只有參數不支援才換設定重試
     }
   }
   throw lastErr;
 }
 
-// 照片縮小成 JPEG base64，加快上傳
 async function fileToJpeg(file, maxSide) {
   const url = URL.createObjectURL(file);
   try {
@@ -422,152 +387,198 @@ async function fileToJpeg(file, maxSide) {
 }
 
 // ============================================================
-// 主畫面
+// 分享圖片（用 canvas 畫出來）
 // ============================================================
+const FONT = '-apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif';
+function ellipsis(ctx, text, maxW) {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let t = text;
+  while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+  return t + '…';
+}
+
+// sections: [{ kind:'person', name, amount, lines } ] 或 總表
+function drawImage({ title, subtitle, hero, heroLabel, rows, footer }) {
+  const W = 1080, PAD = 64, ROW = 112;
+  const H = 360 + (hero ? 200 : 0) + rows.length * ROW + 200;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#f3f5f8'; c.fillRect(0, 0, W, H);
+  // 頂部
+  c.fillStyle = '#005daa'; c.fillRect(0, 0, W, 220);
+  c.fillStyle = '#fff';
+  c.font = `800 60px ${FONT}`; c.fillText(title, PAD, 110);
+  c.font = `400 36px ${FONT}`; c.globalAlpha = 0.85; c.fillText(subtitle, PAD, 170); c.globalAlpha = 1;
+  // 卡片
+  const top = 260;
+  c.fillStyle = '#fff';
+  c.beginPath(); (c.roundRect ? c.roundRect(PAD - 24, top - 20, W - (PAD - 24) * 2, H - top - 120, 36) : c.rect(PAD - 24, top - 20, W - (PAD - 24) * 2, H - top - 120)); c.fill();
+  let y = top + 50;
+  if (hero) {
+    c.fillStyle = '#6b7684'; c.font = `500 38px ${FONT}`; c.fillText(heroLabel, PAD + 16, y + 10);
+    c.fillStyle = '#e31837'; c.font = `900 110px ${FONT}`; c.fillText(hero, PAD + 16, y + 130);
+    y += 200;
+    c.strokeStyle = '#e3e7ec'; c.lineWidth = 3; c.beginPath(); c.moveTo(PAD + 16, y - 20); c.lineTo(W - PAD - 16, y - 20); c.stroke();
+  }
+  for (const r of rows) {
+    c.textAlign = 'left';
+    c.fillStyle = '#1c2430'; c.font = `${r.bold ? 800 : 500} 40px ${FONT}`;
+    c.fillText(ellipsis(c, r.left, W - PAD * 2 - 300), PAD + 16, y + 36);
+    if (r.note) { c.fillStyle = '#6b7684'; c.font = `400 30px ${FONT}`; c.fillText(ellipsis(c, r.note, W - PAD * 2 - 300), PAD + 16, y + 76); }
+    c.textAlign = 'right';
+    c.fillStyle = r.color || '#1c2430'; c.font = `${r.bold ? 900 : 700} 42px ${FONT}`;
+    c.fillText(r.right, W - PAD - 16, y + 36);
+    if (r.rightNote) { c.fillStyle = '#9aa3ad'; c.font = `400 28px ${FONT}`; c.fillText(r.rightNote, W - PAD - 16, y + 76); }
+    y += ROW;
+  }
+  c.textAlign = 'center'; c.fillStyle = '#6b7684'; c.font = `500 34px ${FONT}`;
+  c.fillText(footer, W / 2, H - 50);
+  return cv;
+}
+
+function personImage(r, person, me) {
+  const lines = personLines(r, person.id);
+  const total = lines.reduce((s, l) => s + l.share, 0);
+  return drawImage({
+    title: `🧾 好市多分帳`,
+    subtitle: `${r.date}${r.store ? '・' + r.store : ''}・給 ${person.name}`,
+    heroLabel: `${person.name} 應付`,
+    hero: fmt(total),
+    rows: lines.map((l) => ({
+      left: l.name,
+      note: [l.discount ? `原價 ${l.amount} − 折扣 ${l.discount} = ${l.net}` : '', l.n > 1 ? `${l.n} 人平分` : ''].filter(Boolean).join('・'),
+      right: fmt(l.share),
+    })),
+    footer: `共 ${lines.length} 項・請付給 ${me}`,
+  });
+}
+
+function summaryImage(r, people, me, meId) {
+  const shares = receiptShares(r);
+  const owe = people.filter((p) => p.id !== meId && shares[p.id]);
+  return drawImage({
+    title: `🧾 好市多分帳`,
+    subtitle: `${r.date}${r.store ? '・' + r.store : ''}・總計 ${fmt(receiptTotal(r))}`,
+    rows: [
+      ...people.filter((p) => shares[p.id]).map((p) => ({
+        left: p.name + (p.id === meId ? '（我先付）' : ''),
+        note: `${personLines(r, p.id).length} 項`,
+        right: fmt(shares[p.id]),
+        color: p.id === meId ? '#6b7684' : '#e31837',
+        bold: true,
+      })),
+    ],
+    footer: owe.length ? `以上金額請付給 ${me}` : '沒有需要收款的人',
+  });
+}
+
+async function shareCanvas(cv, filename, setPreview) {
+  const blob = await new Promise((ok) => cv.toBlob(ok, 'image/png'));
+  const file = new File([blob], filename, { type: 'image/png' });
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return; // 使用者取消
+    }
+  }
+  setPreview(URL.createObjectURL(blob)); // 不支援分享就顯示圖片，長按儲存
+}
+
+// ============================================================
+// App
+// ============================================================
+const ME = 'me';
 function App() {
-  const [user, setUser] = useState(undefined);
-  const [isMember, setIsMember] = useState(null);
-  const [members, setMembers] = useState([]);
-  const [receipts, setReceipts] = useState([]);
-  const [settlements, setSettlements] = useState([]);
-  const [tab, setTab] = useState('receipts');
-  const [editing, setEditing] = useState(null);
+  const [people, setPeople] = usePersist('people', [{ id: ME, name: '我' }]);
+  const [receipts, setReceipts] = usePersist('receipts', []);
+  const [settings, setSettings] = usePersist('settings', { geminiKey: '', model: 'gemini-flash-latest' });
+  const [view, setView] = useState({ name: settings.geminiKey ? 'list' : 'settings' });
 
-  useEffect(() => onAuthStateChanged(auth, setUser), []);
-  const myEmail = user?.email?.toLowerCase();
+  const nameOf = (id) => people.find((p) => p.id === id)?.name || '（已刪除）';
+  const saveReceipt = (r) => {
+    setReceipts((xs) => (xs.some((x) => x.id === r.id) ? xs.map((x) => (x.id === r.id ? r : x)) : [r, ...xs])
+      .sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+  };
 
-  useEffect(() => {
-    if (!myEmail) return;
-    setIsMember(null);
-    return onSnapshot(doc(db, 'members', myEmail), (s) => setIsMember(s.exists()), () => setIsMember(false));
-  }, [myEmail]);
+  if (view.name === 'edit')
+    return html`<${Editor} initial=${view.receipt} people=${people} receipts=${receipts} settings=${settings}
+      onCancel=${() => setView({ name: 'list' })}
+      onSave=${(r) => { saveReceipt(r); setView({ name: 'share', id: r.id }); }}
+      onDelete=${(id) => { setReceipts((xs) => xs.filter((x) => x.id !== id)); setView({ name: 'list' }); }} />`;
 
-  useEffect(() => {
-    if (!isMember) return;
-    const subs = [
-      onSnapshot(collection(db, 'members'), (s) => setMembers(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
-      onSnapshot(query(collection(db, 'receipts'), orderBy('date', 'desc')), (s) =>
-        setReceipts(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
-      onSnapshot(collection(db, 'settlements'), (s) => setSettlements(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
-    ];
-    return () => subs.forEach((u) => u());
-  }, [isMember]);
-
-  const nameOf = useMemo(() => {
-    const m = Object.fromEntries(members.map((x) => [x.id, x.name]));
-    return (e) => m[e] || e?.split('@')[0] || '?';
-  }, [members]);
-
-  const balances = useMemo(
-    () => computeBalances(receipts, settlements, members.map((m) => m.id)),
-    [receipts, settlements, members]
-  );
-
-  if (firebaseConfig.apiKey === 'PASTE_HERE')
-    return html`<div class="center login"><h2>尚未設定</h2><p>請用文字編輯器打開 index.html，在最上方貼上你的 Firebase 設定（firebaseConfig）。</p></div>`;
-  if (user === undefined) return html`<div class="center muted">載入中…</div>`;
-  if (!user)
-    return html`<div class="center login">
-      <div class="logo">🧾</div>
-      <h1>好市多分帳</h1>
-      <p class="muted">拍收據 → 分配品項 → 自動算出誰該給誰多少</p>
-      <button class="btn primary big" onClick=${() => signInWithPopup(auth, googleProvider).catch((e) => alert('登入失敗：' + e.message))}>
-        使用 Google 帳號登入
-      </button>
-    </div>`;
-  if (isMember === null) return html`<div class="center muted">確認成員資格中…</div>`;
-  if (!isMember)
-    return html`<div class="center login">
-      <h2>尚未加入</h2>
-      <p>你的帳號 <b>${myEmail}</b> 還不在成員名單中。<br />請已加入的成員到「成員」頁把這個 Gmail 加進去。</p>
-      <button class="btn" onClick=${() => signOut(auth)}>換一個帳號</button>
-    </div>`;
-
-  if (editing)
-    return html`<${ReceiptEditor}
-      initial=${editing === 'new' ? null : editing}
-      members=${members} receipts=${receipts} myEmail=${myEmail} nameOf=${nameOf}
-      onClose=${() => setEditing(null)} />`;
-
-  const todo =
-    settlements.filter((s) => s.status === 'pending' &&
-      ((s.from === myEmail && !s.fromConfirmed) || (s.to === myEmail && !s.toConfirmed))).length +
-    suggestTransfers(balances).filter((t) => t.from === myEmail &&
-      !settlements.some((s) => s.status === 'pending' && s.from === t.from && s.to === t.to)).length;
+  if (view.name === 'share') {
+    const r = receipts.find((x) => x.id === view.id);
+    if (r) return html`<${Share} r=${r} people=${people} nameOf=${nameOf}
+      onBack=${() => setView({ name: 'list' })} onEdit=${() => setView({ name: 'edit', receipt: r })}
+      onPaid=${(pid) => saveReceipt({ ...r, paid: { ...(r.paid || {}), [pid]: !r.paid?.[pid] } })} />`;
+  }
 
   return html`<div class="app">
-    <header class="topbar">
-      <div class="title">🧾 好市多分帳</div>
-      <button class="link" onClick=${() => signOut(auth)} title=${myEmail}>${nameOf(myEmail)}・登出</button>
-    </header>
+    <header class="topbar"><div class="title">🧾 好市多分帳</div></header>
     <main>
-      ${tab === 'receipts' && html`<${ReceiptList} receipts=${receipts} nameOf=${nameOf}
-          onNew=${() => setEditing('new')} onOpen=${(r) => setEditing(r)} />`}
-      ${tab === 'settle' && html`<${Settle} balances=${balances} receipts=${receipts} settlements=${settlements}
-          members=${members} myEmail=${myEmail} nameOf=${nameOf} />`}
-      ${tab === 'members' && html`<${Members} members=${members} myEmail=${myEmail} balances=${balances} />`}
+      ${view.name === 'settings'
+        ? html`<${Settings} people=${people} setPeople=${setPeople} settings=${settings} setSettings=${setSettings} receipts=${receipts} setReceipts=${setReceipts} />`
+        : html`<${List} receipts=${receipts} people=${people} nameOf=${nameOf}
+            onNew=${() => (settings.geminiKey ? setView({ name: 'edit', receipt: null }) : setView({ name: 'settings' }))}
+            onOpen=${(r) => setView({ name: 'share', id: r.id })} />`}
     </main>
     <nav class="tabs">
-      <button class=${tab === 'receipts' ? 'on' : ''} onClick=${() => setTab('receipts')}><span>🧾</span>收據</button>
-      <button class=${tab === 'settle' ? 'on' : ''} onClick=${() => setTab('settle')}>
-        <span>💸</span>結算${todo > 0 && html`<i class="badge">${todo}</i>`}
-      </button>
-      <button class=${tab === 'members' ? 'on' : ''} onClick=${() => setTab('members')}><span>👥</span>成員</button>
+      <button class=${view.name === 'list' ? 'on' : ''} onClick=${() => setView({ name: 'list' })}><span>🧾</span>收據</button>
+      <button class=${view.name === 'settings' ? 'on' : ''} onClick=${() => setView({ name: 'settings' })}><span>⚙️</span>設定</button>
     </nav>
   </div>`;
 }
 
-// ============================================================
-// 收據列表
-// ============================================================
-function ReceiptList({ receipts, nameOf, onNew, onOpen }) {
+// ---------- 收據列表 ----------
+function List({ receipts, people, nameOf, onNew, onOpen }) {
   return html`
     <button class="btn primary block big" onClick=${onNew}>📷 新增收據</button>
     ${receipts.length === 0 && html`<p class="center muted">還沒有收據。拍下好市多收據開始分帳吧！</p>`}
     <ul class="list">
-      ${receipts.map((r) => html`
-        <li key=${r.id} class="card receipt" onClick=${() => onOpen(r)}>
+      ${receipts.map((r) => {
+        const shares = receiptShares(r);
+        const owing = Object.keys(shares).filter((id) => id !== ME && shares[id] > 0);
+        const unpaid = owing.filter((id) => !r.paid?.[id]);
+        return html`<li key=${r.id} class="card receipt" onClick=${() => onOpen(r)}>
           <div class="row between">
             <div><b>${r.date}</b> <span class="muted">${r.store}</span></div>
             <b class="amount">${fmt(receiptTotal(r))}</b>
           </div>
-          <div class="row between small">
-            <span>💳 ${nameOf(r.payer)} 先付</span>
-            <span class="muted">${r.items?.length || 0} 項</span>
-          </div>
           <div class="shares">
-            ${Object.entries(receiptShares(r)).map(([e, v]) =>
-              html`<span key=${e} class=${e === r.payer ? 'pill payer' : 'pill'}>${nameOf(e)} ${fmt(v)}</span>`)}
+            ${Object.entries(shares).map(([id, v]) => html`<span key=${id}
+              class=${'pill ' + (id === ME ? 'me' : r.paid?.[id] ? 'paid' : '')}>${r.paid?.[id] ? '✓ ' : ''}${nameOf(id)} ${fmt(v)}</span>`)}
           </div>
-        </li>`)}
+          ${owing.length > 0 && html`<div class="small ${unpaid.length ? 'warn' : 'ok'}" style="margin-top:6px">
+            ${unpaid.length ? `待收款 ${unpaid.length} 人` : '✓ 全部已收款'}</div>`}
+        </li>`;
+      })}
     </ul>`;
 }
 
-// ============================================================
-// 新增／編輯收據
-// ============================================================
-function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose }) {
+// ---------- 新增／編輯收據 ----------
+function Editor({ initial, people, receipts, settings, onCancel, onSave, onDelete }) {
   const [date, setDate] = useState(initial?.date || today());
   const [store, setStore] = useState(initial?.store || '');
-  const [payer, setPayer] = useState(initial?.payer || myEmail);
   const [items, setItems] = useState(() => (initial?.items || []).map((it) => ({ ...it, _id: newId() })));
   const [printedTotal, setPrintedTotal] = useState(initial?.printedTotal || 0);
   const [previews, setPreviews] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
+  const [step, setStep] = useState('');
   const [elapsed, setElapsed] = useState(0);
+  const [err, setErr] = useState('');
   const fileRef = useRef();
+  const memory = useMemo(() => buildAssignMemory(receipts), [receipts]);
+  const ids = people.map((p) => p.id);
+
   useEffect(() => {
     if (!busy) return;
     setElapsed(0);
     const t = setInterval(() => setElapsed((x) => x + 1), 1000);
     return () => clearInterval(t);
   }, [busy]);
-
-  const used = new Set([payer, ...items.flatMap((i) => i.assignees || [])]);
-  const people = members.filter((m) => m.active !== false || used.has(m.id));
-  const activeIds = members.filter((m) => m.active !== false).map((m) => m.id);
-  const memory = useMemo(() => buildAssignMemory(receipts), [receipts]);
 
   const total = receiptTotal({ items });
   const shares = receiptShares({ items });
@@ -578,104 +589,68 @@ function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose })
     const files = [...(e.target.files || [])].slice(0, 4);
     e.target.value = '';
     if (!files.length) return;
-    setErr(''); setBusy(true);
+    setErr(''); setBusy(true); setStep('準備照片');
     try {
       const imgs = await Promise.all(files.map((f) => fileToJpeg(f, files.length > 1 ? 1500 : 1800)));
       setPreviews(imgs.map((i) => i.preview));
-      const data = await parseReceipt(imgs);
+      const data = await parseReceipt(imgs, settings, setStep);
       if (data.date) setDate(data.date);
       if (data.store) setStore(data.store);
       setPrintedTotal(data.printedTotal);
       setItems(data.items.map((it) => {
-        const remembered = (memory[it.code] || []).filter((x) => activeIds.includes(x));
+        const remembered = (memory[it.code] || []).filter((x) => ids.includes(x));
         return { ...it, _id: newId(), assignees: remembered, _remembered: remembered.length > 0 };
       }));
       if (!data.items.length) setErr('沒有辨識到品項，請重拍或手動輸入');
     } catch (e2) {
       const m = String(e2.message || e2);
-      setErr(/App Check/i.test(m)
-        ? '辨識失敗：App Check 驗證沒通過。請確認 index.html 已填入 RECAPTCHA_SITE_KEY，且 Firebase App Check 已用 Fraud Defense 註冊這個網頁。'
-        : /abort|timeout|network|load failed|fetch/i.test(m)
-        ? '辨識失敗：連線中斷（可能切換了 App、螢幕鎖定或網路不穩）。請停留在此畫面再試一次。（' + m + '）'
-        : '辨識失敗：' + m);
+      setErr(/API key|API_KEY/i.test(m) ? '辨識失敗：Gemini 金鑰無效，請到「設定」重新貼上。' : '辨識失敗：' + m);
     } finally {
       setBusy(false);
     }
   }
 
   const patch = (id, p) => setItems((xs) => xs.map((x) => (x._id === id ? { ...x, ...p } : x)));
-  const toggle = (id, email) => setItems((xs) => xs.map((x) => {
+  const toggle = (id, pid) => setItems((xs) => xs.map((x) => {
     if (x._id !== id) return x;
     const a = new Set(x.assignees || []);
-    a.has(email) ? a.delete(email) : a.add(email);
-    return { ...x, assignees: [...a], _remembered: false };
+    a.has(pid) ? a.delete(pid) : a.add(pid);
+    return { ...x, assignees: ids.filter((i) => a.has(i)), _remembered: false };
   }));
-  const fillUnassigned = (emails) =>
-    setItems((xs) => xs.map((x) => (x.assignees?.length ? x : { ...x, assignees: [...emails] })));
-  const addItem = () =>
-    setItems((xs) => [...xs, { _id: newId(), name: '', code: '', qty: 1, amount: 0, discount: 0, assignees: [] }]);
+  const fillUnassigned = (list) => setItems((xs) => xs.map((x) => (x.assignees?.length ? x : { ...x, assignees: [...list] })));
+  const addItem = () => setItems((xs) => [...xs, { _id: newId(), name: '', code: '', qty: 1, amount: 0, discount: 0, assignees: [] }]);
 
-  async function save() {
+  function save() {
     if (!items.length) return setErr('至少要有一個品項');
     if (unassigned) return setErr(`還有 ${unassigned} 個品項沒有指派給任何人`);
-    setBusy(true); setErr('');
-    const payload = {
-      date, store: store.trim(), payer, total,
-      printedTotal: Number(printedTotal) || 0,
+    onSave({
+      id: initial?.id || newId(),
+      date, store: store.trim(), printedTotal: Number(printedTotal) || 0,
+      paid: initial?.paid || {},
       items: items.map(({ name, code, qty, amount, discount, assignees }) => ({
-        name: (name || '').trim() || '（未命名）',
-        code: (code || '').trim(),
-        qty: Number(qty) || 1,
-        amount: Math.round(Number(amount) || 0),
-        discount: Math.round(Number(discount) || 0),
-        assignees: assignees || [],
+        name: (name || '').trim() || '（未命名）', code: (code || '').trim(), qty: Number(qty) || 1,
+        amount: Math.round(Number(amount) || 0), discount: Math.round(Number(discount) || 0), assignees: assignees || [],
       })),
-      updatedAt: serverTimestamp(),
-      updatedBy: myEmail,
-    };
-    try {
-      if (initial?.id) await updateDoc(doc(db, 'receipts', initial.id), payload);
-      else await addDoc(collection(db, 'receipts'), { ...payload, createdAt: serverTimestamp(), createdBy: myEmail });
-      onClose();
-    } catch (e) {
-      setErr('儲存失敗：' + e.message);
-      setBusy(false);
-    }
-  }
-
-  async function remove() {
-    if (!confirm('確定要刪除這張收據？相關金額會從結算中移除。')) return;
-    await deleteDoc(doc(db, 'receipts', initial.id));
-    onClose();
+    });
   }
 
   return html`<div class="app editor">
     <header class="topbar">
-      <button class="link" onClick=${onClose}>← 返回</button>
+      <button class="link" onClick=${onCancel}>← 返回</button>
       <div class="title">${initial ? '編輯收據' : '新增收據'}</div>
-      ${initial ? html`<button class="link danger" onClick=${remove}>刪除</button>` : html`<span style="width:40px"></span>`}
+      ${initial ? html`<button class="link danger" onClick=${() => confirm('確定刪除這張收據？') && onDelete(initial.id)}>刪除</button>` : html`<span style="width:40px"></span>`}
     </header>
     <main>
       <section class="card">
         <h3>① 收據照片</h3>
         <input ref=${fileRef} type="file" accept="image/*" multiple hidden onChange=${onFiles} />
         <div class="row gap">
-          <button class="btn primary" disabled=${busy} onClick=${() => fileRef.current.click()}>
-            📷 ${items.length ? '重新拍照辨識' : '拍照／選擇照片'}
-          </button>
+          <button class="btn primary" disabled=${busy} onClick=${() => fileRef.current.click()}>📷 ${items.length ? '重新拍照辨識' : '拍照／選擇照片'}</button>
           ${!items.length && html`<button class="btn" onClick=${addItem}>手動輸入</button>`}
         </div>
         <p class="hint">收據太長可以分段拍，一次選最多 4 張。辨識後請核對金額。</p>
         ${previews.length > 0 && html`<div class="previews">${previews.map((p) => html`<img src=${p} />`)}</div>`}
-        ${busy && html`<div class="loading">辨識中… ${elapsed} 秒<br /><small>請停留在這個畫面，不要切換 App 或鎖螢幕</small></div>`}
-      </section>
-
-      <section class="card">
-        <h3>② 誰付的錢？</h3>
-        <div class="chips">
-          ${people.map((m) => html`<button key=${m.id} class=${'chip ' + (payer === m.id ? 'on payer' : '')}
-              onClick=${() => setPayer(m.id)}>${payer === m.id ? '💳 ' : ''}${m.name}</button>`)}
-        </div>
+        ${busy && html`<div class="loading">${step}… ${elapsed} 秒<br /><small>請停留在這個畫面，不要切換 App 或鎖螢幕</small></div>`}
         <div class="row gap fields">
           <label>日期<input type="date" value=${date} onInput=${(e) => setDate(e.target.value)} /></label>
           <label>分店／備註<input value=${store} placeholder="例：台南店" onInput=${(e) => setStore(e.target.value)} /></label>
@@ -683,13 +658,12 @@ function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose })
       </section>
 
       ${items.length > 0 && html`<section class="card">
-        <h3>③ 品項歸屬</h3>
+        <h3>② 品項是誰的？</h3>
         <div class="quick">
           <span class="muted">未指派的全部給：</span>
           <div class="chips">
-            ${members.filter((m) => m.active !== false).map((m) =>
-              html`<button key=${m.id} class="chip small" onClick=${() => fillUnassigned([m.id])}>${m.name}</button>`)}
-            <button class="chip small" onClick=${() => fillUnassigned(activeIds)}>全員平分</button>
+            ${people.map((p) => html`<button key=${p.id} class="chip small" onClick=${() => fillUnassigned([p.id])}>${p.name}</button>`)}
+            <button class="chip small" onClick=${() => fillUnassigned(ids)}>全員平分</button>
           </div>
         </div>
         <ul class="items">
@@ -701,17 +675,13 @@ function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose })
                 <button class="x" title="刪除品項" onClick=${() => setItems((xs) => xs.filter((x) => x._id !== it._id))}>✕</button>
               </div>
               <div class="item-nums">
-                <label>金額<input type="number" inputmode="numeric" value=${it.amount}
-                  onInput=${(e) => patch(it._id, { amount: e.target.value })} /></label>
-                <label>折扣<input type="number" inputmode="numeric" value=${it.discount}
-                  onInput=${(e) => patch(it._id, { discount: e.target.value })} /></label>
-                <div class="net"><small>實付</small><b>${fmt(net)}</b>
-                  ${Number(it.discount) > 0 && html`<s>${fmt(it.amount)}</s>`}</div>
+                <label>金額<input type="number" inputmode="numeric" value=${it.amount} onInput=${(e) => patch(it._id, { amount: e.target.value })} /></label>
+                <label>折扣<input type="number" inputmode="numeric" value=${it.discount} onInput=${(e) => patch(it._id, { discount: e.target.value })} /></label>
+                <div class="net"><small>實付</small><b>${fmt(net)}</b>${Number(it.discount) > 0 && html`<s>${fmt(it.amount)}</s>`}</div>
               </div>
               <div class="chips">
-                ${people.map((m) => html`<button key=${m.id} class=${'chip ' + (it.assignees?.includes(m.id) ? 'on' : '')}
-                    onClick=${() => toggle(it._id, m.id)}>${m.name}</button>`)}
-                <button class="chip ghost" onClick=${() => patch(it._id, { assignees: [...activeIds], _remembered: false })}>全員</button>
+                ${people.map((p) => html`<button key=${p.id} class=${'chip ' + (it.assignees?.includes(p.id) ? 'on' : '')} onClick=${() => toggle(it._id, p.id)}>${p.name}</button>`)}
+                <button class="chip ghost" onClick=${() => patch(it._id, { assignees: [...ids], _remembered: false })}>全員</button>
               </div>
               <div class="item-foot">
                 ${it.code && html`<span class="code">#${it.code}</span>`}
@@ -726,231 +696,181 @@ function ReceiptEditor({ initial, members, receipts, myEmail, nameOf, onClose })
       </section>`}
       <div style="height:190px"></div>
     </main>
-
     <footer class="summary">
       <div class="sum-row">
-        <span>合計 <b>${fmt(total)}</b>
-          ${printedTotal > 0 && html`<small class="muted">（收據 ${fmt(printedTotal)}）</small>`}</span>
-        <span class="muted">付款：${nameOf(payer)}</span>
+        <span>合計 <b>${fmt(total)}</b>${printedTotal > 0 && html` <small class="muted">（收據 ${fmt(printedTotal)}）</small>`}</span>
       </div>
       ${mismatch && html`<div class="warn">⚠ 合計與收據總額不符，請檢查是否有漏掉或辨識錯的品項</div>`}
       <div class="sum-people">
-        ${Object.entries(shares).map(([e, v]) => html`<span key=${e}>${nameOf(e)} <b>${fmt(v)}</b></span>`)}
+        ${Object.entries(shares).map(([id, v]) => html`<span key=${id}>${people.find((p) => p.id === id)?.name} <b>${fmt(v)}</b></span>`)}
         ${unassigned > 0 && html`<span class="warn">未指派 ${unassigned} 項</span>`}
       </div>
       ${err && html`<div class="error">${err}</div>`}
-      <button class="btn primary block" disabled=${busy || !items.length} onClick=${save}>
-        ${busy ? '處理中…' : '儲存收據'}
-      </button>
+      <button class="btn primary block" disabled=${busy || !items.length} onClick=${save}>儲存並產生分享圖</button>
     </footer>
   </div>`;
 }
 
-// ============================================================
-// 結算（誰給誰、雙方確認、個人統計）
-// ============================================================
-function Settle({ balances, receipts, settlements, members, myEmail, nameOf }) {
-  const transfers = suggestTransfers(balances);
-  const pending = settlements.filter((s) => s.status === 'pending');
-  const done = settlements.filter((s) => s.status === 'done')
-    .sort((a, b) => (b.doneAt?.seconds || 0) - (a.doneAt?.seconds || 0));
-  const [paying, setPaying] = useState(null);
-  const [err, setErr] = useState('');
-  const [month, setMonth] = useState('all');
-  const [showDone, setShowDone] = useState(false);
-  const byMonth = useMemo(() => spendingByMonth(receipts), [receipts]);
-  const months = Object.keys(byMonth).sort().reverse();
+// ---------- 結果與分享 ----------
+function Share({ r, people, nameOf, onBack, onEdit, onPaid }) {
+  const [preview, setPreview] = useState(null);
+  const me = nameOf(ME);
+  const shares = receiptShares(r);
+  const involved = people.filter((p) => shares[p.id]);
+  const others = involved.filter((p) => p.id !== ME);
+  const fname = (who) => `好市多分帳_${r.date}_${who}.png`;
 
-  // 由付款方或收款方發起，先勾自己那一方
-  async function start() {
-    setErr('');
-    const amount = Math.round(Number(paying.amount));
-    if (!(amount > 0)) return setErr('金額需大於 0');
-    const iAmFrom = paying.from === myEmail;
-    try {
-      await addDoc(collection(db, 'settlements'), {
-        from: paying.from, to: paying.to, amount,
-        fromConfirmed: iAmFrom, toConfirmed: !iAmFrom,
-        status: 'pending', createdBy: myEmail, createdAt: serverTimestamp(),
-      });
-      setPaying(null);
-    } catch (e) { setErr('失敗：' + e.message); }
-  }
-
-  // 另一方確認（交易，避免兩人同時按造成狀態錯亂）
-  async function confirmSide(s) {
-    setErr('');
-    try {
-      await runTransaction(db, async (tx) => {
-        const ref = doc(db, 'settlements', s.id);
-        const snap = await tx.get(ref);
-        if (!snap.exists()) throw new Error('紀錄已不存在');
-        const d = snap.data();
-        if (d.status !== 'pending') return;
-        const fromConfirmed = d.fromConfirmed || d.from === myEmail;
-        const toConfirmed = d.toConfirmed || d.to === myEmail;
-        const both = fromConfirmed && toConfirmed;
-        tx.update(ref, { fromConfirmed, toConfirmed, status: both ? 'done' : 'pending', ...(both ? { doneAt: serverTimestamp() } : {}) });
-      });
-    } catch (e) { setErr('確認失敗：' + e.message); }
-  }
-
-  async function cancel(s) {
-    if (confirm('取消這筆還款紀錄？')) await deleteDoc(doc(db, 'settlements', s.id));
-  }
-
-  const rows = members.filter((m) => m.active !== false || balances[m.id]?.balance)
-    .map((m) => ({ ...m, ...(balances[m.id] || {}) }));
-
-  return html`
-    <section class="card">
-      <h3>💸 誰要給誰</h3>
-      ${transfers.length === 0 && html`<p class="muted">目前帳都結清了 🎉</p>`}
-      <ul class="debts">
-        ${transfers.map((t) => {
-          const p = pending.find((s) => s.from === t.from && s.to === t.to);
-          const mine = t.from === myEmail || t.to === myEmail;
-          const editing = paying && paying.from === t.from && paying.to === t.to;
-          return html`<li key=${t.from + t.to} class=${mine ? 'debt mine' : 'debt'}>
-            <div class="debt-line"><b>${nameOf(t.from)}</b><span class="arrow">→</span><b>${nameOf(t.to)}</b>
-              <span class="amount">${fmt(t.amount)}</span></div>
-            ${p ? html`<div class="muted small">已有一筆 ${fmt(p.amount)} 的還款等待確認（見下方）</div>`
-              : editing ? html`<div class="row gap">
-                  <input type="number" inputmode="numeric" value=${paying.amount}
-                    onInput=${(e) => setPaying({ ...paying, amount: e.target.value })} />
-                  <button class="btn primary" onClick=${start}>送出</button>
-                  <button class="btn" onClick=${() => setPaying(null)}>取消</button></div>`
-              : mine ? html`<button class="btn primary" onClick=${() => setPaying({ ...t })}>
-                  ${t.from === myEmail ? '我已付款' : '我已收到款項'}</button>`
-              : html`<div class="muted small">等待兩人處理</div>`}
-          </li>`;
-        })}
-      </ul>
-      <p class="hint">付款後由任一方按下按鈕，再由另一方確認；<b>雙方都確認後</b>這筆應付款才會消失。可修改金額來記錄部分還款。</p>
-      ${err && html`<div class="error">${err}</div>`}
-    </section>
-
-    ${pending.length > 0 && html`<section class="card">
-      <h3>⏳ 待雙方確認</h3>
-      <ul class="debts">
-        ${pending.map((s) => {
-          const needMe = (s.from === myEmail && !s.fromConfirmed) || (s.to === myEmail && !s.toConfirmed);
-          const party = s.from === myEmail || s.to === myEmail;
-          return html`<li key=${s.id} class=${needMe ? 'debt need' : 'debt'}>
-            <div class="debt-line"><b>${nameOf(s.from)}</b><span class="arrow">→</span><b>${nameOf(s.to)}</b>
-              <span class="amount">${fmt(s.amount)}</span></div>
-            <div class="confirms">
-              <span>${s.fromConfirmed ? '✅' : '⬜'} ${nameOf(s.from)} 已付款</span>
-              <span>${s.toConfirmed ? '✅' : '⬜'} ${nameOf(s.to)} 已收款</span>
-            </div>
+  return html`<div class="app">
+    <header class="topbar">
+      <button class="link" onClick=${onBack}>← 收據</button>
+      <div class="title">${r.date}</div>
+      <button class="link" onClick=${onEdit}>編輯</button>
+    </header>
+    <main>
+      <section class="card">
+        <div class="row between"><h3 style="margin:0">💸 每個人應付</h3><b class="amount">${fmt(receiptTotal(r))}</b></div>
+        <p class="hint" style="margin-bottom:10px">${r.store || ''} 共 ${r.items.length} 項，由 ${me} 先付</p>
+        <ul class="debts">
+          ${others.map((p) => html`<li key=${p.id} class=${'debt ' + (r.paid?.[p.id] ? 'done' : 'mine')}>
+            <div class="debt-line"><b>${p.name}</b><span class="muted small">${personLines(r, p.id).length} 項</span>
+              <span class="amount">${fmt(shares[p.id])}</span></div>
             <div class="row gap">
-              ${needMe && html`<button class="btn primary" onClick=${() => confirmSide(s)}>
-                ${s.from === myEmail ? '確認我已付款' : '確認我已收到'}</button>`}
-              ${party && html`<button class="btn" onClick=${() => cancel(s)}>取消</button>`}
+              <button class="btn primary" onClick=${() => shareCanvas(personImage(r, p, me), fname(p.name), setPreview)}>📤 分享明細給 ${p.name}</button>
+              <button class="btn" onClick=${() => onPaid(p.id)}>${r.paid?.[p.id] ? '✓ 已收款' : '標記已收款'}</button>
             </div>
-          </li>`;
-        })}
-      </ul>
-    </section>`}
+          </li>`)}
+          ${shares[ME] ? html`<li class="debt"><div class="debt-line"><b>${me}</b><span class="muted small">自己負擔</span>
+            <span class="amount" style="color:var(--muted)">${fmt(shares[ME])}</span></div></li>` : ''}
+        </ul>
+        ${others.length > 0 && html`<button class="btn block" style="margin-top:6px"
+          onClick=${() => shareCanvas(summaryImage(r, involved, me, ME), fname('總表'), setPreview)}>📤 分享總表（全部人的金額）</button>`}
+        ${others.length === 0 && html`<p class="muted">這張收據都是自己的，不用收款。</p>`}
+      </section>
 
-    <section class="card">
-      <h3>📊 個人帳務</h3>
-      <table class="stats">
-        <thead><tr><th></th><th>消費</th><th>先付</th><th>淨額</th></tr></thead>
-        <tbody>
-          ${rows.map((r) => html`<tr key=${r.id}>
-            <td>${r.name}</td><td>${fmt(r.spent || 0)}</td><td>${fmt(r.paid || 0)}</td>
-            <td class=${r.balance > 0 ? 'pos' : r.balance < 0 ? 'neg' : ''}>${r.balance > 0 ? '+' : ''}${fmt(r.balance || 0)}</td>
-          </tr>`)}
-        </tbody>
-      </table>
-      <p class="hint">淨額 = 先付 − 消費 ± 已確認的還款。正數代表別人欠他，負數代表他欠別人。</p>
-      <div class="row between month-head">
-        <b>各月消費</b>
-        <select value=${month} onChange=${(e) => setMonth(e.target.value)}>
-          <option value="all">全部月份</option>
-          ${months.map((m) => html`<option value=${m}>${m}</option>`)}
-        </select>
-      </div>
-      <table class="stats"><tbody>
-        ${(month === 'all' ? months : [month]).map((m) => html`<tr key=${m}>
-          <td>${m}</td>
-          <td colspan="3"><div class="shares">
-            ${Object.entries(byMonth[m] || {}).map(([e, v]) => html`<span class="pill">${nameOf(e)} ${fmt(v)}</span>`)}
-          </div></td>
-        </tr>`)}
-      </tbody></table>
-    </section>
-
-    ${done.length > 0 && html`<section class="card">
-      <button class="link" onClick=${() => setShowDone(!showDone)}>${showDone ? '▾' : '▸'} 已完成的還款（${done.length}）</button>
-      ${showDone && html`<ul class="history">
-        ${done.map((s) => html`<li key=${s.id}>
-          <span>${nameOf(s.from)} → ${nameOf(s.to)}</span><b>${fmt(s.amount)}</b>
-          <small class="muted">${s.doneAt?.toDate?.().toLocaleDateString('zh-TW') || ''}</small>
-        </li>`)}
-      </ul>`}
-    </section>`}`;
+      <section class="card">
+        <h3>🧾 明細</h3>
+        <table class="stats">
+          <tbody>
+            ${r.items.map((it) => html`<tr>
+              <td style="white-space:normal">${it.name}<div class="muted small">${(it.assignees || []).map(nameOf).join('、')}</div></td>
+              <td>${fmt(itemNet(it))}${it.discount ? html`<div class="muted small"><s>${fmt(it.amount)}</s></div>` : ''}</td>
+            </tr>`)}
+          </tbody>
+        </table>
+      </section>
+    </main>
+    ${preview && html`<div class="modal" onClick=${() => setPreview(null)}>
+      <p>長按圖片可儲存或分享</p>
+      <img src=${preview} onClick=${(e) => e.stopPropagation()} />
+      <button class="btn modal-close" onClick=${() => setPreview(null)}>✕ 關閉</button>
+    </div>`}
+  </div>`;
 }
 
-// ============================================================
-// 成員
-// ============================================================
-function Members({ members, myEmail, balances }) {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [err, setErr] = useState('');
+// ---------- 設定 ----------
+function Settings({ people, setPeople, settings, setSettings, receipts }) {
+  const [newName, setNewName] = useState('');
+  const [key, setKey] = useState(settings.geminiKey || '');
+  const [model, setModel] = useState(settings.model || 'gemini-flash-latest');
+  const [test, setTest] = useState('');
 
-  async function add(e) {
+  const used = new Set(receipts.flatMap((r) => r.items.flatMap((i) => i.assignees || [])));
+  function addPerson(e) {
     e.preventDefault();
-    setErr('');
-    const em = email.trim().toLowerCase();
-    if (!name.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return setErr('請填寫名字與正確的 Gmail');
-    if (members.some((m) => m.id === em)) return setErr('這個 Gmail 已經是成員了');
+    const n = newName.trim();
+    if (!n) return;
+    if (people.some((p) => p.name === n)) return alert('已經有這個名字了');
+    setPeople([...people, { id: newId(), name: n }]);
+    setNewName('');
+  }
+  function rename(p) {
+    const n = prompt('新的名字', p.name);
+    if (n && n.trim()) setPeople(people.map((x) => (x.id === p.id ? { ...x, name: n.trim() } : x)));
+  }
+  function remove(p) {
+    if (used.has(p.id) && !confirm(`${p.name} 在舊收據中有品項，刪除後舊收據會顯示「（已刪除）」。確定刪除？`)) return;
+    setPeople(people.filter((x) => x.id !== p.id));
+  }
+  async function saveKey() {
+    const k = key.trim();
+    setSettings({ ...settings, geminiKey: k, model: model.trim() || 'gemini-flash-latest' });
+    if (!k) return setTest('');
+    setTest('測試中…');
+    const s = performance.now();
     try {
-      await setDoc(doc(db, 'members', em), { name: name.trim(), email: em, active: true, createdAt: serverTimestamp(), createdBy: myEmail });
-      setName(''); setEmail('');
-    } catch (e2) { setErr('新增失敗：' + e2.message); }
-  }
-  async function rename(m) {
-    const n = prompt('新的顯示名稱', m.name);
-    if (n && n.trim()) await updateDoc(doc(db, 'members', m.id), { name: n.trim() });
-  }
-  async function toggleActive(m) {
-    const bal = balances[m.id]?.balance || 0;
-    if (m.active !== false && bal !== 0 &&
-      !confirm(`${m.name} 還有 ${fmt(bal)} 未結清，仍要停用嗎？（停用後不會出現在新收據的選項中，但舊帳保留）`)) return;
-    await updateDoc(doc(db, 'members', m.id), { active: m.active === false });
+      const t = await callGemini({ key: k, model: model.trim() || 'gemini-flash-latest', parts: [{ text: '請只回覆兩個字：正常' }], timeoutMs: 45000 });
+      setTest(`✅ 金鑰可用，Gemini 回覆「${t.trim().slice(0, 10)}」（${((performance.now() - s) / 1000).toFixed(1)} 秒）`);
+    } catch (e) {
+      setTest(`❌ 失敗（${((performance.now() - s) / 1000).toFixed(1)} 秒）：${e.message}`);
+    }
   }
 
-  const sorted = members.slice().sort((a, b) => (a.active === false) - (b.active === false));
   return html`
     <section class="card">
-      <h3>👥 成員</h3>
+      <h3>👥 分帳的人</h3>
       <ul class="members">
-        ${sorted.map((m) => html`<li key=${m.id} class=${m.active === false ? 'inactive' : ''}>
-          <div>
-            <b>${m.name}</b> ${m.id === myEmail && html`<span class="tag">我</span>`}
-            ${m.active === false && html`<span class="tag gray">已停用</span>`}
-            <div class="muted small">${m.id}</div>
-          </div>
+        ${people.map((p) => html`<li key=${p.id}>
+          <div><b>${p.name}</b> ${p.id === ME && html`<span class="tag">我・先付錢的人</span>`}</div>
           <div class="row gap">
-            <button class="link" onClick=${() => rename(m)}>改名</button>
-            ${m.id !== myEmail && html`<button class="link" onClick=${() => toggleActive(m)}>${m.active === false ? '啟用' : '停用'}</button>`}
+            <button class="link" onClick=${() => rename(p)}>改名</button>
+            ${p.id !== ME && html`<button class="link danger" onClick=${() => remove(p)}>刪除</button>`}
           </div>
         </li>`)}
       </ul>
-    </section>
-    <section class="card">
-      <h3>＋ 新增成員</h3>
-      <form onSubmit=${add} class="add-member">
-        <input placeholder="顯示名稱（例：小明）" value=${name} onInput=${(e) => setName(e.target.value)} />
-        <input placeholder="對方的 Gmail" type="email" value=${email} onInput=${(e) => setEmail(e.target.value)} />
+      <form class="row gap" style="margin-top:10px" onSubmit=${addPerson}>
+        <input class="grow" placeholder="新增一個人的名字" value=${newName} onInput=${(e) => setNewName(e.target.value)} />
         <button class="btn primary">新增</button>
       </form>
-      <p class="hint">加入後，對方用這個 Google 帳號登入網站即可使用。</p>
-      ${err && html`<div class="error">${err}</div>`}
+      <p class="hint">「我」的名字會出現在分享圖片上（請付給 ○○），建議改成你的名字。</p>
+    </section>
+
+    <section class="card">
+      <h3>🔑 Gemini 金鑰（收據辨識用）</h3>
+      <input class="full" type="password" placeholder="貼上 AIza 開頭的金鑰" value=${key} onInput=${(e) => setKey(e.target.value)} />
+      <details style="margin-top:8px"><summary class="muted small">進階：模型名稱</summary>
+        <input class="full" value=${model} onInput=${(e) => setModel(e.target.value)} />
+      </details>
+      <button class="btn primary block" style="margin-top:10px" onClick=${saveKey}>儲存並測試</button>
+      ${test && html`<pre class="diag">${test}</pre>`}
+      <p class="hint">金鑰只存在這支手機的瀏覽器裡，不會放進網頁或 GitHub。
+        到 <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a> 免費申請。</p>
+    </section>
+
+    <section class="card">
+      <h3>💾 資料</h3>
+      <p class="hint" style="margin-top:0">所有收據只存在這支手機。換手機或清除瀏覽器資料前，請先匯出備份。</p>
+      <div class="row gap">
+        <button class="btn" onClick=${exportData}>匯出備份</button>
+        <button class="btn" onClick=${importData}>匯入備份</button>
+      </div>
     </section>`;
+}
+
+function exportData() {
+  const data = { people: LS.get('people', []), receipts: LS.get('receipts', []), v: 1 };
+  const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `好市多分帳備份_${today()}.json`;
+  a.click();
+}
+function importData() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'application/json,.json';
+  inp.onchange = async () => {
+    try {
+      const d = JSON.parse(await inp.files[0].text());
+      if (!Array.isArray(d.people) || !Array.isArray(d.receipts)) throw new Error('格式不符');
+      if (!confirm(`匯入 ${d.receipts.length} 張收據，會取代目前資料，確定？`)) return;
+      LS.set('people', d.people);
+      LS.set('receipts', d.receipts);
+      location.reload();
+    } catch (e) {
+      alert('匯入失敗：' + e.message);
+    }
+  };
+  inp.click();
 }
 
 render(html`<${App} />`, document.getElementById('root'));
