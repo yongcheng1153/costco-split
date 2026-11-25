@@ -331,38 +331,59 @@ async function callGemini({ key, model, parts, json, think, timeoutMs }) {
   }
 }
 
+// 模型忙碌（503/429/500）或不存在（404）時，等一下再換下一個模型
+const FALLBACK_MODELS = ['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+const isBusy = (e) => [429, 500, 503].includes(e.status) || /overload|high demand|unavailable|try again/i.test(e.message || '');
+async function withModels(settings, onStep, run) {
+  const models = [...new Set([settings.model || 'gemini-flash-latest', ...FALLBACK_MODELS])];
+  let lastErr;
+  for (const [i, model] of models.entries()) {
+    // 同一個模型忙碌時先重試一次
+    for (let retry = 0; retry < 2; retry++) {
+      try {
+        const out = await run(model);
+        return { out, model };
+      } catch (e) {
+        lastErr = e;
+        if (e.status === 404 || /not found|not supported for generateContent/i.test(e.message || '')) break; // 模型不存在 → 換下一個
+        if (!isBusy(e)) throw e; // 金鑰錯誤等問題，換模型也沒用
+        if (retry === 0) { onStep(`${model} 忙碌中，3 秒後重試`); await sleep(3000); }
+      }
+    }
+    if (i < models.length - 1) onStep(`改用 ${models[i + 1]}`);
+  }
+  throw lastErr;
+}
+
 async function parseReceipt(images, settings, onStep) {
   if (!settings.geminiKey) throw new Error('還沒設定 Gemini 金鑰，請到「設定」頁貼上。');
   const parts = [
     { text: PROMPT + (images.length > 1 ? '\n\n以下多張照片是同一張收據的不同段落（依序），重疊的部分不要重複計算。' : '') },
     ...images.map((im) => ({ inlineData: { mimeType: 'image/jpeg', data: im.data } })),
   ];
-  // 先用「少量思考」加快速度；模型不支援這個參數（400）就改用預設
-  const attempts = [{ think: true }, { think: false }];
-  let lastErr;
-  for (const [i, a] of attempts.entries()) {
-    onStep(i === 0 ? '辨識中' : '改用預設設定重試');
+  onStep('辨識中');
+  const { out: p } = await withModels(settings, onStep, async (model) => {
+    // 先用「少量思考」加快速度；模型不支援這個參數（400）就改用預設
     try {
-      const text = await callGemini({ key: settings.geminiKey, model: settings.model || 'gemini-flash-latest', parts, json: true, think: a.think, timeoutMs: 90000 });
-      const p = JSON.parse(text);
-      return {
-        store: p.store || '',
-        date: /^\d{4}-\d{2}-\d{2}$/.test(p.date || '') ? p.date : '',
-        printedTotal: Math.round(Number(p.printedTotal) || 0),
-        items: (p.items || []).map((it) => ({
-          name: String(it.name || '').trim(),
-          code: String(it.code || '').trim(),
-          qty: Number(it.qty) || 1,
-          amount: Math.round(Number(it.amount) || 0),
-          discount: Math.abs(Math.round(Number(it.discount) || 0)),
-        })).filter((it) => it.name || it.amount),
-      };
+      return JSON.parse(await callGemini({ key: settings.geminiKey, model, parts, json: true, think: true, timeoutMs: 90000 }));
     } catch (e) {
-      lastErr = e;
-      if (e.status !== 400) break; // 只有參數不支援才換設定重試
+      if (e.status !== 400) throw e;
+      return JSON.parse(await callGemini({ key: settings.geminiKey, model, parts, json: true, think: false, timeoutMs: 90000 }));
     }
-  }
-  throw lastErr;
+  });
+  return {
+    store: p.store || '',
+    date: /^\d{4}-\d{2}-\d{2}$/.test(p.date || '') ? p.date : '',
+    printedTotal: Math.round(Number(p.printedTotal) || 0),
+    items: (p.items || []).map((it) => ({
+      name: String(it.name || '').trim(),
+      code: String(it.code || '').trim(),
+      qty: Number(it.qty) || 1,
+      amount: Math.round(Number(it.amount) || 0),
+      discount: Math.abs(Math.round(Number(it.discount) || 0)),
+    })).filter((it) => it.name || it.amount),
+  };
 }
 
 async function fileToJpeg(file, maxSide) {
@@ -604,7 +625,9 @@ function Editor({ initial, people, receipts, settings, onCancel, onSave, onDelet
       if (!data.items.length) setErr('沒有辨識到品項，請重拍或手動輸入');
     } catch (e2) {
       const m = String(e2.message || e2);
-      setErr(/API key|API_KEY/i.test(m) ? '辨識失敗：Gemini 金鑰無效，請到「設定」重新貼上。' : '辨識失敗：' + m);
+      setErr(/API key|API_KEY/i.test(m) ? '辨識失敗：Gemini 金鑰無效，請到「設定」重新貼上。'
+        : isBusy(e2) ? '辨識失敗：Google 的模型都太忙了，請過幾分鐘再按一次（照片不用重拍，直接重新選即可）。'
+        : '辨識失敗：' + m);
     } finally {
       setBusy(false);
     }
@@ -798,10 +821,12 @@ function Settings({ people, setPeople, settings, setSettings, receipts }) {
     setTest('測試中…');
     const s = performance.now();
     try {
-      const t = await callGemini({ key: k, model: model.trim() || 'gemini-flash-latest', parts: [{ text: '請只回覆兩個字：正常' }], timeoutMs: 45000 });
-      setTest(`✅ 金鑰可用，Gemini 回覆「${t.trim().slice(0, 10)}」（${((performance.now() - s) / 1000).toFixed(1)} 秒）`);
+      const { out: t, model: used } = await withModels({ model: model.trim() }, (m) => setTest('測試中… ' + m), (m) =>
+        callGemini({ key: k, model: m, parts: [{ text: '請只回覆兩個字：正常' }], timeoutMs: 45000 }));
+      setTest(`✅ 金鑰可用（模型 ${used}），Gemini 回覆「${t.trim().slice(0, 10)}」（${((performance.now() - s) / 1000).toFixed(1)} 秒）`);
     } catch (e) {
-      setTest(`❌ 失敗（${((performance.now() - s) / 1000).toFixed(1)} 秒）：${e.message}`);
+      setTest(`❌ 失敗（${((performance.now() - s) / 1000).toFixed(1)} 秒）：${e.message}` +
+        (isBusy(e) ? '\n\n→ 金鑰沒問題，是 Google 的模型暫時太忙，過幾分鐘再試即可。' : ''));
     }
   }
 
