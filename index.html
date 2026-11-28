@@ -269,17 +269,33 @@ const newId = () => Date.now().toString(36) + (seq++).toString(36) + Math.random
 // ============================================================
 const PROMPT = `你是台灣好市多（Costco）收據辨識助手。請讀取照片中的收據，輸出 JSON。
 
-收據格式說明：
-- 每個商品通常是兩行：第一行是商品名稱，第二行是「商品編號  數量x  單價  金額 T」。
-- 「***COUPON」代表折扣（回饋金），下一行是說明（例如「#1956385回饋金」「IRC FOR #1307818」「身體保養回饋金」），
-  再下一行是「折扣編號  1x  金額  金額-T」，金額後面有「-」代表要減掉。
-- 折扣說明中的「#數字」就是被折扣商品的商品編號，請把折扣金額合併到該商品的 discount 欄位。
-- 若折扣說明沒有商品編號（例如「身體保養回饋金」），就套用到緊接在 COUPON 之前的那個商品。
-- 不要把 COUPON 本身當成商品輸出。
-- 「預掃描商品開始/結束」、會員編號、發票、付款方式、找零等都不是商品。
-- amount 是該商品那一行的金額（數量×單價），discount 是折扣金額（正數），沒有折扣就填 0。
-- 若收據上有總計／應付金額，填入 printedTotal；沒有或看不到就填 0。
-- 日期格式 YYYY-MM-DD，看不到就填空字串。
+【商品行】
+- 每個商品是兩行：第一行是商品名稱；第二行是「商品編號  數量x  單價  小計  [T]」。
+- amount 一律填「最右邊的小計」，不是單價。例：「107892  3x  189  567 T」→ qty=3、amount=567。
+- 行尾的「T」代表含稅，免稅商品（生鮮、牛乳、水果等）沒有 T，但仍然是商品，不可漏掉。
+- 同一商品分成多行出現時，每一行各輸出一筆，不要合併。
+- 「***預掃描商品開始***」到「***預掃描商品結束***」之間的品項都是正常商品，要輸出；只有這兩行標記本身不是商品。
+
+【折扣（***COUPON）】
+- 「***COUPON」下面一行是折扣說明，再下一行是「折扣編號  1x  金額  金額-T」，請把這個金額填到被折扣商品的 discount（正數），不要把 COUPON 當成商品輸出。
+- 說明中有「#數字」時，那就是被折扣商品的編號。常見寫法：「#1956385回饋金」「IRC #215918」「IRC FOR #1307818」「COUPON FOR #229516」。
+- 說明沒有編號時（例如「IRC FOR ITO-EN」「衛生棉回饋金」「身體保養回饋金」），套用到緊接在 ***COUPON 正上方的那個商品。
+- 同一商品有多筆折扣時，discount 填加總。
+
+【不是商品，也不是折扣】
+- 店名地址、SALE、金星會員、商品數小計、預掃描商品總數、商品數總計、總金額、聯名卡／信用卡／現金、找零、折價券數量、卡號、GUI、共同載具、條碼、停車繳費說明。
+- 「此筆交易的2%回饋金約$XX」是年度回饋說明，不是折扣，忽略。
+- 照片上的手寫筆跡（圈、劃線、問號、打勾）不是收據內容，忽略。
+
+【其他欄位】
+- printedTotal：「總金額」那一行的數字；看不到就填 0。
+- printedItemCount：「商品數總計」的數字（等於所有商品數量加總）；看不到就填 0。
+- date：收據上是「月/日/年」（例如 11/28/2026），請轉成 YYYY-MM-DD；看不到就填空字串。
+- store：分店名稱，例如「台南店」「大順店」。
+
+【輸出前自我檢查】
+- 所有商品 qty 加總應等於 printedItemCount；所有 (amount − discount) 加總應等於 printedTotal；有折扣的商品數應等於「折價券數量」。
+- 若對不上，請重新看一次是否漏掉商品、把單價當成小計、或把折扣套錯商品，修正後再輸出。
 - 看不清楚的字請盡量推測，但不要捏造不存在的商品。`;
 
 const SCHEMA = {
@@ -288,6 +304,7 @@ const SCHEMA = {
     store: { type: 'STRING' },
     date: { type: 'STRING' },
     printedTotal: { type: 'NUMBER' },
+    printedItemCount: { type: 'NUMBER' },
     items: {
       type: 'ARRAY',
       items: {
@@ -410,6 +427,7 @@ async function parseReceipt(images, settings, onStep) {
     store: p.store || '',
     date: /^\d{4}-\d{2}-\d{2}$/.test(p.date || '') ? p.date : '',
     printedTotal: Math.round(Number(p.printedTotal) || 0),
+    printedItemCount: Math.round(Number(p.printedItemCount) || 0),
     items: (p.items || []).map((it) => ({
       name: String(it.name || '').trim(),
       code: String(it.code || '').trim(),
@@ -619,6 +637,7 @@ function Editor({ initial, people, receipts, settings, onCancel, onSave, onDelet
   const [store, setStore] = useState(initial?.store || '');
   const [items, setItems] = useState(() => (initial?.items || []).map((it) => ({ ...it, _id: newId() })));
   const [printedTotal, setPrintedTotal] = useState(initial?.printedTotal || 0);
+  const [printedItemCount, setPrintedItemCount] = useState(initial?.printedItemCount || 0);
   const [previews, setPreviews] = useState([]);
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState('');
@@ -639,6 +658,8 @@ function Editor({ initial, people, receipts, settings, onCancel, onSave, onDelet
   const shares = receiptShares({ items });
   const unassigned = items.filter((it) => !it.assignees?.length).length;
   const mismatch = printedTotal > 0 && items.length > 0 && Math.abs(printedTotal - total) >= 1;
+  const qtySum = items.reduce((s, it) => s + (Number(it.qty) || 1), 0);
+  const countMismatch = printedItemCount > 0 && items.length > 0 && qtySum !== printedItemCount;
 
   async function onFiles(e) {
     const files = [...(e.target.files || [])].slice(0, 4);
@@ -652,6 +673,7 @@ function Editor({ initial, people, receipts, settings, onCancel, onSave, onDelet
       if (data.date) setDate(data.date);
       if (data.store) setStore(data.store);
       setPrintedTotal(data.printedTotal);
+      setPrintedItemCount(data.printedItemCount);
       setItems(data.items.map((it) => {
         const remembered = (memory[it.code] || []).filter((x) => ids.includes(x));
         return { ...it, _id: newId(), assignees: remembered, _remembered: remembered.length > 0 };
@@ -682,7 +704,7 @@ function Editor({ initial, people, receipts, settings, onCancel, onSave, onDelet
     if (unassigned) return setErr(`還有 ${unassigned} 個品項沒有指派給任何人`);
     onSave({
       id: initial?.id || newId(),
-      date, store: store.trim(), printedTotal: Number(printedTotal) || 0,
+      date, store: store.trim(), printedTotal: Number(printedTotal) || 0, printedItemCount: Number(printedItemCount) || 0,
       paid: initial?.paid || {},
       items: items.map(({ name, code, qty, amount, discount, assignees }) => ({
         name: (name || '').trim() || '（未命名）', code: (code || '').trim(), qty: Number(qty) || 1,
@@ -742,6 +764,7 @@ function Editor({ initial, people, receipts, settings, onCancel, onSave, onDelet
               </div>
               <div class="item-foot">
                 ${it.code && html`<span class="code">#${it.code}</span>`}
+                ${Number(it.qty) > 1 && html`<span class="tag">${it.qty} 件</span>`}
                 ${it._remembered && html`<span class="tag">依上次分配</span>`}
                 ${n > 1 && html`<span class="muted">每人約 ${fmt(net / n)}</span>`}
                 ${n === 0 && html`<span class="warn">尚未指派</span>`}
@@ -758,6 +781,7 @@ function Editor({ initial, people, receipts, settings, onCancel, onSave, onDelet
         <span>合計 <b>${fmt(total)}</b>${printedTotal > 0 && html` <small class="muted">（收據 ${fmt(printedTotal)}）</small>`}</span>
       </div>
       ${mismatch && html`<div class="warn">⚠ 合計與收據總額不符，請檢查是否有漏掉或辨識錯的品項</div>`}
+      ${countMismatch && html`<div class="warn">⚠ 辨識到 ${qtySum} 件，收據寫 ${printedItemCount} 件，可能漏了品項</div>`}
       <div class="sum-people">
         ${Object.entries(shares).map(([id, v]) => html`<span key=${id}>${people.find((p) => p.id === id)?.name} <b>${fmt(v)}</b></span>`)}
         ${unassigned > 0 && html`<span class="warn">未指派 ${unassigned} 項</span>`}
